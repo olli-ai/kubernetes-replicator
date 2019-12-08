@@ -303,6 +303,7 @@ func (r *objectReplicator) replicateObject(object interface{}, sourceObject  int
 
 	if target, ok := meta.Annotations[ReplicateToAnnotation]; ok {
 		var err error
+		target = strings.TrimPrefix(target, sourceMeta.Namespace+"/")
 
 		if !validName.MatchString(target) {
 			err = fmt.Errorf("%s %s/%s has invalid name on annotation %s (%s)",
@@ -423,7 +424,7 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 	if fromObject == nil {
 		fromObject = sourceObject
 	}
-	return r.install(&r.replicatorProps, &copyMeta, sourceMeta, fromObject)
+	return r.install(&r.replicatorProps, &copyMeta, sourceObject, fromObject)
 }
 
 func (r *objectReplicator) objectFromStore(key string) (interface{}, *metav1.ObjectMeta, error) {
