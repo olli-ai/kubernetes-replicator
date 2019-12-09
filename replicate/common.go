@@ -87,7 +87,7 @@ type Replicator interface {
 // It means that replication-allowes and replications-allowed-namespaces are correct
 // Returns true if replication is allowed.
 // If replication is not allowed returns false with error message
-func (r *replicatorProps) isReplicationPermitted(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
+func (r *replicatorProps) isReplicationAllowed(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
 	annotationAllowed, ok := sourceObject.Annotations[ReplicationAllowed]
 	annotationAllowedNs, okNs := sourceObject.Annotations[ReplicationAllowedNamespaces]
 	// unless allowAll, explicit permission is required

@@ -296,34 +296,17 @@ func (r *objectReplicator) replicateObject(object interface{}, sourceObject  int
 	meta := r.getMeta(object)
 	sourceMeta := r.getMeta(sourceObject)
 	// make sure replication is allowed
-	if ok, err := r.isReplicationPermitted(meta, sourceMeta); !ok {
+	if ok, err := r.isReplicationAllowed(meta, sourceMeta); !ok {
 		log.Printf("replication of %s %s/%s is cancelled: %s", r.Name, meta.Namespace, meta.Name, err)
 		return err
 	}
 
-	if target, ok := meta.Annotations[ReplicateToAnnotation]; ok {
-		var err error
-		target = strings.TrimPrefix(target, sourceMeta.Namespace+"/")
-
-		if !validName.MatchString(target) {
-			err = fmt.Errorf("%s %s/%s has invalid name on annotation %s (%s)",
-				r.Name, meta.Namespace, meta.Name, ReplicateToAnnotation, target)
-
-		} else if _, ok := meta.Annotations[ReplicateToNamespacesAnnotation]; ok {
-			err = fmt.Errorf("%s %s/%s has unexpected annotation %s with annotation %s",
-				r.Name, meta.Namespace, meta.Name, ReplicateToNamespacesAnnotation, ReplicateFromAnnotation)
-
-		} else if target != meta.Name {
-			target = fmt.Sprintf("%s/%s", meta.Namespace, target)
-			log.Printf("%s %s/%s is replicated from %s/%s",
-				r.Name, meta.Namespace, meta.Name, sourceMeta.Namespace, sourceMeta.Name)
-			return r.installObject(target, nil, object, sourceObject)
-		}
-
-		if err != nil {
-			log.Printf("%s", err)
-			return err
-		}
+	// if target, ok := resolveAnnotation(meta, ReplicateToAnnotation); ok {
+	// 	return r.installObject(target, nil, object, sourceObject)
+	// }
+	if _, ok := meta.Annotations[ReplicateToAnnotation]; ok {
+		ObjectAdded(object)
+		return nil
 	}
 
 	if ok, err := r.needsUpdate(meta, sourceMeta, nil); !ok {
@@ -338,24 +321,42 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 	var targetMeta *metav1.ObjectMeta
 	sourceMeta := r.getMeta(sourceObject)
 	var targetSplit []string
+	clear := false
+	// look for from annotation
+	if val, ok := resolveAnnotation(sourceMeta, ReplicateFromAnnotation); !ok {
+	// no to-namespaces annotation with from annotation
+	} else if _, ok := meta.Annotations[ReplicateToNamespacesAnnotation]; !ok {
+		err := fmt.Errorf("%s %s/%s has unexpected annotation %s with annotation %s",
+			r.Name, sourceMeta.Namespace, sourceMeta.Name, ReplicateToNamespacesAnnotation, ReplicateFromAnnotation)
+		log.Print(err.String())
+		return err
+	// to annotation is quite restrictive in this situation
+	} else if name := strings.TrimPrefix(meta.Annotations[ReplicateToAnnotation], sourceMeta.Namespace+"/"); !validName.MatchString(name) {
+		err := fmt.Errorf("%s %s/%s has invalid name on annotation %s (%s)",
+			r.Name, sourceMeta.Namespace, sourceMeta.Name, ReplicateToAnnotation, name)
+		log.Print(err.String())
+		return err
+	// already received fromObject
+	} else if fromObject != nil {
 
-	if fromObject != nil {
-	} else if val, ok := resolveAnnotation(sourceMeta, ReplicateFromAnnotation); ok {
+	} else if obj, exists, err := r.objectStore.GetByKey(val); err != nil {
+		log.Printf("could not get %s %s: %s", r.Name, val, err)
+		return err
+	// fromObject not found, clear the target
+	} else if !exists {
+		log.Printf("source %s %s deleted: clearing target of %s/%s",
+			r.Name, val, sourceMeta.Namespace, sourceMeta.Name)
+		clear = true
+	// check that rpelication is allowed from fromObject
+	} else if ok, err := r.isReplicationAllowed(sourceMeta, r.getMeta(obj)); !ok {
+		log.Printf("replication of %s %s/%s is cancelled: %s",
+			r.Name, sourceMeta.Namespace, sourceMeta.Name, err)
+		return err
 
-		if obj, exists, err := r.objectStore.GetByKey(val); err != nil {
-			log.Printf("could not get %s %s: %s", r.Name, val, err)
-			return err
-
-		} else if exists {
-			log.Printf("target of %s %s/%s is replicated from %s",
-				r.Name, sourceMeta.Namespace, sourceMeta.Name, val)
-			fromObject = obj
-
-		} else {
-			log.Printf("source %s %s deleted: clearing target of %s/%s",
-				r.Name, val, sourceMeta.Namespace, sourceMeta.Name)
-			sourceObject = nil
-		}
+	} else {
+		log.Printf("target of %s %s/%s is replicated from %s",
+			r.Name, sourceMeta.Namespace, sourceMeta.Name, val)
+		fromObject = obj
 	}
 
 	if targetObject == nil {
@@ -421,7 +422,7 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 		copyMeta.ResourceVersion = targetMeta.ResourceVersion
 	}
 
-	if fromObject == nil {
+	if !clear && fromObject == nil {
 		fromObject = sourceObject
 	}
 	return r.install(&r.replicatorProps, &copyMeta, sourceObject, fromObject)
