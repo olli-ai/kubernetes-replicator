@@ -137,8 +137,10 @@ func (r *replicatorProps) isReplicationAllowed(object *metav1.ObjectMeta, source
 }
 
 // Checks that data update is needed
-// Returns true if update is needed
-// If update is not needed returns false with error message
+// Returns:
+// - needed: true if an update is needed
+// - once: true if no update is needed because replicated once
+// - err: if not needed, an error message
 func (r *replicatorProps) needsDataUpdate(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, bool, error) {
 	// target was "replicated" from a delete source, or never replicated
 	if targetVersion, ok := object.Annotations[ReplicatedFromVersionAnnotation]; !ok {
@@ -186,7 +188,7 @@ func (r *replicatorProps) needsDataUpdate(object *metav1.ObjectMeta, sourceObjec
 	} else if targetVersion, err := semver.NewVersion(annotationVersion); err != nil {
 		return false, false, fmt.Errorf("target %s/%s has illformed annotation %s: %s",
 			object.Namespace, object.Name, ReplicateOnceVersionAnnotation, err)
-	// source version is greatwe than source version, should update
+	// source version is greater than source version, should update
 	} else if sourceVersion.GreaterThan(targetVersion) {
 		hasOnce = false
 	// source version is not greater than target version
@@ -203,11 +205,11 @@ func (r *replicatorProps) needsDataUpdate(object *metav1.ObjectMeta, sourceObjec
 	return true, false, nil
 }
 
-// Checks that data annotation is needed
+// Checks that "from" and "once" annotations update is needed
 // Returns true if update is needed
 // Return an error only if a source annotation is illformed
 func (r *replicatorProps) needsFromAnnotationsUpdate(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
-	update := false
+	update := r.needsCopyLabelsUpdate(object)
 	// check "from" annotation of the source
 	if source, sOk := resolveAnnotation(sourceObject, ReplicateFromAnnotation); !sOk {
 		return false, fmt.Errorf("source %s/%s misses annotation %s",
@@ -239,8 +241,11 @@ func (r *replicatorProps) needsFromAnnotationsUpdate(object *metav1.ObjectMeta, 
 	return update, nil
 }
 
+// Checks that "allowed" annotations update is needed
+// Returns true if update is needed
+// Return an error only if a source annotation is illformed
 func (r *replicatorProps) needsAllowedAnnotationsUpdate(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
-	update := false
+	update := r.needsCopyLabelsUpdate(object)
 
 	allowed, okA := sourceObject.Annotations[ReplicationAllowed]
 	if val, ok := object.Annotations[ReplicationAllowed]; ok != okA || ok && val != allowed {
@@ -275,6 +280,29 @@ func (r *replicatorProps) needsAllowedAnnotationsUpdate(object *metav1.ObjectMet
 	}
 
 	return true, nil
+}
+
+// Checks that copy labels are up to date
+// Returns true if update is needed
+func (r *replicatorProps) needsCopyLabelsUpdate(object *metav1.ObjectMeta) bool {
+	if len(object.Labels) != len(CopyLabels) {
+		return true
+	}
+	for k, v := range CopyLabels {
+		if object.Labels[k] != v {
+			return true
+		}
+	}
+	return false
+}
+
+// Returns a copy of the copy labels
+func getCopyLabels() map[string]string {
+	labels := map[string]string{}
+	for k, v := range CopyLabels {
+		labels[k] = v
+	}
+	return labels
 }
 
 // Checks that replication from the source object to the target objects is allowed
@@ -318,9 +346,6 @@ func (r *replicatorProps) isReplicatedTo(object *metav1.ObjectMeta, targetObject
 	}
 
 	return false, nil
-
-	// return false, fmt.Error("source %s/%s is not replated to %s",
-	// 	object.Namespace, object.Name, key)
 }
 
 // Returns everything needed to compute the desired targets
@@ -334,7 +359,7 @@ func (r *replicatorProps) getReplicationTargets(object *metav1.ObjectMeta) ([]st
 		return nil, nil, nil
 	}
 
-	key := fmt.Sprintf("%s/%s", object.Name, object.Namespace)
+	key := fmt.Sprintf("%s/%s", object.Namespace, object.Name)
 	targets := []string{}
 	targetPatterns := []targetPattern{}
 	// cache of patterns, to reuse them as much as possible

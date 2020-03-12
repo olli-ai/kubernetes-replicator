@@ -14,7 +14,7 @@ type MockReplicator struct {
 	synced bool
 }
 
-func (r *MockReplicator) Run() {
+func (r *MockReplicator) Start() {
 }
 
 func (r *MockReplicator) Synced() bool {

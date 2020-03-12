@@ -14,6 +14,10 @@ var (
 	ReplicationAllowedNamespaces    = "replication-allowed-namespaces"
 )
 
+var CopyLabels = map[string]string {
+	"managed-by": "kubernetes-replicator",
+}
+
 func PrefixAnnotations(prefix string){
 	ReplicateFromAnnotation         = prefix + ReplicateFromAnnotation
 	ReplicateToAnnotation           = prefix + ReplicateToAnnotation
