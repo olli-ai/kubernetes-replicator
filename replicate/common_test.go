@@ -388,6 +388,12 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		},
 		map[string]string {},
 	},{
+		"no from annotation both",
+		true,
+		false,
+		map[string]string {},
+		map[string]string {},
+	},{
 		"different from annotation name",
 		true,
 		false,

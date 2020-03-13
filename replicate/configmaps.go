@@ -1,7 +1,6 @@
 package replicate
 
 import (
-	"log"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -13,7 +12,7 @@ var ConfigMapActions *configMapActions = &configMapActions{}
 
 // NewConfigMapReplicator creates a new config map replicator
 func NewConfigMapReplicator(client kubernetes.Interface, resyncPeriod time.Duration, allowAll bool) Replicator {
-	repl := objectReplicator{
+	repl := &objectReplicator{
 		replicatorProps: replicatorProps{
 			Name:            "config map",
 			allowAll:        allowAll,
@@ -22,7 +21,7 @@ func NewConfigMapReplicator(client kubernetes.Interface, resyncPeriod time.Durat
 		replicatorActions: ConfigMapActions,
 	}
 	repl.Init(resyncPeriod, client.CoreV1().ConfigMaps(""), &v1.ConfigMap{})
-	return &repl
+	return repl
 }
 
 type configMapActions struct {}
@@ -56,8 +55,6 @@ func (*configMapActions) update(r *replicatorProps, object interface{}, sourceOb
 		configMap.BinaryData = nil
 	}
 
-	log.Printf("updating config map %s/%s", configMap.Namespace, configMap.Name)
-
 	return r.client.CoreV1().ConfigMaps(configMap.Namespace).Update(configMap)
 }
 
@@ -66,8 +63,6 @@ func (*configMapActions) clear(r *replicatorProps, object interface{}, annotatio
 	configMap.Data = nil
 	configMap.BinaryData = nil
 	configMap.Annotations = annotations
-
-	log.Printf("clearing config map %s/%s", configMap.Namespace, configMap.Name)
 
 	return r.client.CoreV1().ConfigMaps(configMap.Namespace).Update(configMap)
 }
@@ -102,10 +97,6 @@ func (*configMapActions) install(r *replicatorProps, meta *metav1.ObjectMeta, so
 		}
 	}
 
-	log.Printf("installing config map %s/%s", configMap.Namespace, configMap.Name)
-
-	var s *v1.ConfigMap
-	var err error
 	if configMap.ResourceVersion == "" {
 		return r.client.CoreV1().ConfigMaps(configMap.Namespace).Create(&configMap)
 	} else {
@@ -115,7 +106,6 @@ func (*configMapActions) install(r *replicatorProps, meta *metav1.ObjectMeta, so
 
 func (*configMapActions) delete(r *replicatorProps, object interface{}) error {
 	configMap := object.(*v1.ConfigMap)
-	log.Printf("deleting config map %s/%s", configMap.Namespace, configMap.Name)
 
 	options := metav1.DeleteOptions{
 		Preconditions: &metav1.Preconditions{

@@ -123,7 +123,7 @@ func (r *objectReplicator) InitObjectStore(resyncPeriod time.Duration, objectsIn
 			},
 			WatchFunc: func(lo metav1.ListOptions) (watch.Interface, error) {
 				// watch, err := objectsInterface.Watch(lo)
-				resp := watchFunc.call([]reflect.Value{reflect.ValueOf(lo)})
+				resp := watchFunc.Call([]reflect.Value{reflect.ValueOf(lo)})
 				// return watch, err
 				return resp[0].Interface().(watch.Interface), resp[1].Interface().(error)
 			},
@@ -294,7 +294,8 @@ Targets:
 			// apparently this target is not valid anymore
 			log.Printf("annotation of source %s %s changed: deleting target %s",
 				r.Name, key, target)
-			r.deleteObject(target, object)
+			r.deleteObject(target, object,
+				"source has updated \"replicate-to\" annotations")
 		}
 	}
 	// clean all those fields, they will be refilled further anyway
@@ -310,6 +311,7 @@ Targets:
 	if val, ok := meta.Annotations[ReplicatedByAnnotation]; ok {
 		log.Printf("%s %s is replicated by %s", r.Name, key, val)
 		sourceObject, exists, err := r.objectStore.GetByKey(val)
+		reason := ""
 
 		if err != nil {
 			log.Printf("could not get %s %s: %s", r.Name, val, err)
@@ -317,6 +319,7 @@ Targets:
 		// the source has been deleted, so should this object be
 		} else if !exists {
 			log.Printf("source %s %s deleted: deleting target %s", r.Name, val, key)
+			reason = "source does not exist"
 
 		} else if ok, err := r.isReplicatedTo(r.getMeta(sourceObject), meta); err != nil {
 			log.Printf("could not parse %s %s: %s", r.Name, val, err)
@@ -325,10 +328,11 @@ Targets:
 		} else if !ok {
 			log.Printf("source %s %s is not replicated to %s: deleting target", r.Name, val, key)
 			exists = false
+			reason = "source has wrong \"replicate-to\" annotations"
 		}
 		// no source, delete it
 		if !exists {
-			r.doDeleteObject(object)
+			r.doDeleteObject(meta, object, reason)
 			return
 		// source is here, install it
 		} else if err := r.installObject("", object, sourceObject); err != nil {
@@ -424,7 +428,7 @@ Targets:
 		// the source does not exist anymore/yet, clear the data of the target
 		} else if !exists {
 			log.Printf("source %s %s deleted: clearing target %s", r.Name, val, key)
-			r.doClearObject(object)
+			r.doClearObject(object, "source does not exist")
 		// update the target
 		} else {
 			r.replicateObject(object, sourceObject)
@@ -460,6 +464,7 @@ func (r *objectReplicator) replicateObject(object interface{}, sourceObject  int
 		delete(annotations, ReplicateOnceVersionAnnotation)
 	}
 	// replicate it
+	log.Printf("updating %s %s/%s: updating data", r.Name, meta.Namespace, meta.Name)
 	object, err := r.update(&r.replicatorProps, object, sourceObject, annotations)
 	if err != nil {
 		log.Printf("error while updating %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, err)
@@ -508,6 +513,8 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 		targetMeta = r.getMeta(targetObject)
 		targetSplit = []string{targetMeta.Namespace, targetMeta.Name}
 	}
+
+	reason := ""
 	// the data must come from another object
 	if source, ok := resolveAnnotation(sourceMeta, ReplicateFromAnnotation); ok {
 		if targetMeta != nil {
@@ -520,6 +527,9 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 			} else if !ok {
 				return nil
 			}
+			reason = "creating with \"replicate-from\" annotations"
+		} else {
+			reason = "updating \"replicate-from\" annotations"
 		}
 		// create a new meta with all the annotations
 		copyMeta := metav1.ObjectMeta{
@@ -540,7 +550,7 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 			copyMeta.ResourceVersion = targetMeta.ResourceVersion
 		}
 		// install it, but keeps the original data
-		return r.doInstallObject(&copyMeta, sourceObject, targetObject)
+		return r.doInstallObject(&copyMeta, sourceObject, targetObject, reason)
 	}
 	// the data comes directly from the source
 	if targetMeta != nil {
@@ -575,8 +585,13 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 				delete(copyMeta.Annotations, ReplicationAllowedNamespaces)
 			}
 			// install it with the original data
-			return r.doInstallObject(copyMeta, sourceObject, targetObject)
+			reason = "updating \"replication-allowed\" annotations"
+			return r.doInstallObject(copyMeta, sourceObject, targetObject, reason)
+		} else {
+			reason = "updating data"
 		}
+	} else {
+		reason = "creating with data"
 	}
 	// create a new meta with all the annotations
 	copyMeta := metav1.ObjectMeta{
@@ -605,11 +620,12 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 		copyMeta.ResourceVersion = targetMeta.ResourceVersion
 	}
 	// install it with the source data
-	return r.doInstallObject(&copyMeta, sourceObject, sourceObject)
+	return r.doInstallObject(&copyMeta, sourceObject, sourceObject, reason)
 }
 
 // A wrapper around replicatorActions.install
-func (r *objectReplicator) doInstallObject(meta *metav1.ObjectMeta, sourceObject interface{}, dataObject interface{}) error {
+func (r *objectReplicator) doInstallObject(meta *metav1.ObjectMeta, sourceObject interface{}, dataObject interface{}, reason string) error {
+	log.Printf("installing %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, reason)
 	object, err := r.install(&r.replicatorProps, meta, sourceObject, dataObject)
 	if err != nil {
 		log.Printf("error while installing %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, err)
@@ -684,7 +700,7 @@ func (r *objectReplicator) ObjectDeleted(object interface{}) {
 	// delete targets of replicate-to annotations
 	if targets, ok := r.targetsTo[key]; ok {
 		for _, t := range targets {
-			r.deleteObject(t, object)
+			r.deleteObject(t, object, "source deleted")
 		}
 	}
 	delete(r.targetsTo, key)
@@ -777,11 +793,11 @@ func (r *objectReplicator) clearObject(key string, sourceObject interface{}) (bo
 		return false, nil
 	}
 
-	return true, r.doClearObject(targetObject)
+	return true, r.doClearObject(targetObject, "source deleted")
 }
 
 // Clears all the data from an object
-func (r *objectReplicator) doClearObject(object interface{}) error {
+func (r *objectReplicator) doClearObject(object interface{}, reason string) error {
 	meta := r.getMeta(object)
 
 	if _, ok := meta.Annotations[ReplicatedFromVersionAnnotation]; !ok {
@@ -797,6 +813,7 @@ func (r *objectReplicator) doClearObject(object interface{}) error {
 	delete(annotations, ReplicatedFromVersionAnnotation)
 	delete(annotations, ReplicateOnceVersionAnnotation)
 
+	log.Printf("clearing %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, reason)
 	object, err := r.clear(&r.replicatorProps, object, annotations)
 	if err != nil {
 		log.Printf("error while clearing %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, err)
@@ -809,7 +826,7 @@ func (r *objectReplicator) doClearObject(object interface{}) error {
 
 // Deletes an object that was creted by replication
 // But first check that it is still the case
-func (r *objectReplicator) deleteObject(key string, sourceObject interface{}) (bool, error) {
+func (r *objectReplicator) deleteObject(key string, sourceObject interface{}, reason string) (bool, error) {
 	sourceMeta := r.getMeta(sourceObject)
 
 	object, meta, err := r.objectFromStore(key)
@@ -824,15 +841,15 @@ func (r *objectReplicator) deleteObject(key string, sourceObject interface{}) (b
 		return false, err
 	// delete the object
 	} else {
-		return true, r.doDeleteObject(object)
+		return true, r.doDeleteObject(meta, object, reason)
 	}
 }
 
 // A wrapper around replicatorActions.delete
-func (r *objectReplicator) doDeleteObject(object interface{}) error {
+func (r *objectReplicator) doDeleteObject(meta *metav1.ObjectMeta, object interface{}, reason string) error {
+	log.Printf("deleting %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, reason)
 	err := r.delete(&r.replicatorProps, object)
 	if err != nil {
-		meta := r.getMeta(object)
 		log.Printf("error while deleting %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, err)
 	} else {
 		// update the object in the store as soon as possible

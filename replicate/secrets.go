@@ -1,7 +1,6 @@
 package replicate
 
 import (
-	"log"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -22,7 +21,7 @@ func NewSecretReplicator(client kubernetes.Interface, resyncPeriod time.Duration
 		replicatorActions: SecretActions,
 	}
 	repl.Init(resyncPeriod, client.CoreV1().Secrets(""), &v1.Secret{})
-	return &repl
+	return repl
 }
 
 type secretActions struct {}
@@ -47,8 +46,6 @@ func (*secretActions) update(r *replicatorProps, object interface{}, sourceObjec
 		secret.Data = nil
 	}
 
-	log.Printf("updating secret %s/%s", secret.Namespace, secret.Name)
-
 	return r.client.CoreV1().Secrets(secret.Namespace).Update(secret)
 }
 
@@ -56,8 +53,6 @@ func (*secretActions) clear(r *replicatorProps, object interface{}, annotations 
 	secret := object.(*v1.Secret).DeepCopy()
 	secret.Data = nil
 	secret.Annotations = annotations
-
-	log.Printf("clearing secret %s/%s", secret.Namespace, secret.Name)
 
 	return r.client.CoreV1().Secrets(secret.Namespace).Update(secret)
 }
@@ -86,10 +81,6 @@ func (*secretActions) install(r *replicatorProps, meta *metav1.ObjectMeta, sourc
 		}
 	}
 
-	log.Printf("installing secret %s/%s", secret.Namespace, secret.Name)
-
-	var s *v1.Secret
-	var err error
 	if secret.ResourceVersion == "" {
 		return r.client.CoreV1().Secrets(secret.Namespace).Create(&secret)
 	} else {
@@ -99,7 +90,6 @@ func (*secretActions) install(r *replicatorProps, meta *metav1.ObjectMeta, sourc
 
 func (*secretActions) delete(r *replicatorProps, object interface{}) error {
 	secret := object.(*v1.Secret)
-	log.Printf("deleting secret %s/%s", secret.Namespace, secret.Name)
 
 	options := metav1.DeleteOptions{
 		Preconditions: &metav1.Preconditions{
