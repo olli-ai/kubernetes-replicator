@@ -80,7 +80,7 @@ type replicatorProps struct {
 // Replicator describes the common interface that the secret and configmap
 // replicators should adhere to
 type Replicator interface {
-	Start()
+	Start() func()
 	Synced() bool
 }
 
@@ -88,21 +88,21 @@ type Replicator interface {
 // It means that replication-allowes and replications-allowed-namespaces are correct
 // Returns true if replication is allowed.
 // If replication is not allowed returns false with error message
-func (r *replicatorProps) isReplicationAllowed(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
+func (r *replicatorProps) isReplicationAllowed(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, bool, error) {
 	annotationAllowed, ok := sourceObject.Annotations[ReplicationAllowed]
 	annotationAllowedNs, okNs := sourceObject.Annotations[ReplicationAllowedNamespaces]
 	// unless allowAll, explicit permission is required
 	if !r.allowAll && !ok && !okNs {
-		return false, fmt.Errorf("source %s/%s does not explicitely allow replication",
+		return false, true, fmt.Errorf("source %s/%s does not explicitely allow replication",
 			sourceObject.Namespace, sourceObject.Name)
 	}
 	// check allow annotation
 	if ok {
 		if val, err := strconv.ParseBool(annotationAllowed); err != nil {
-			return false, fmt.Errorf("source %s/%s has illformed annotation %s (%s): %s",
+			return false, false, fmt.Errorf("source %s/%s has illformed annotation %s (%s): %s",
 				sourceObject.Namespace, sourceObject.Name, ReplicationAllowed, annotationAllowed, err)
 		} else if !val {
-			return false, fmt.Errorf("source %s/%s explicitely disallow replication",
+			return false, true, fmt.Errorf("source %s/%s explicitely disallow replication",
 				sourceObject.Namespace, sourceObject.Name)
 		}
 	}
@@ -118,22 +118,22 @@ func (r *replicatorProps) isReplicationAllowed(object *metav1.ObjectMeta, source
 			} else if ok, err := regexp.MatchString(`^(?:`+ns+`)$`, object.Namespace); ok {
 				allowed = true
 			} else if err != nil {
-				return false, fmt.Errorf("source %s/%s has compilation error on annotation %s (%s): %s",
+				return false, false, fmt.Errorf("source %s/%s has compilation error on annotation %s (%s): %s",
 					sourceObject.Namespace, sourceObject.Name, ReplicationAllowedNamespaces, ns, err)
 			}
 		}
 		if !allowed {
-			return false, fmt.Errorf("source %s/%s does not allow replication to namespace %s",
+			return false, true, fmt.Errorf("source %s/%s does not allow replication to namespace %s",
 				sourceObject.Namespace, sourceObject.Name, object.Namespace)
 		}
 	}
 	// source cannot have "replicate-from" annotation
 	if val, ok := resolveAnnotation(sourceObject, ReplicateFromAnnotation); ok {
-		return false, fmt.Errorf("source %s/%s is already replicated from %s",
+		return false, false, fmt.Errorf("source %s/%s is already replicated from %s",
 			sourceObject.Namespace, sourceObject.Name, val)
 	}
 
-	return true, nil
+	return true, false, nil
 }
 
 // Checks that data update is needed

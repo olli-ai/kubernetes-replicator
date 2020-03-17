@@ -11,7 +11,6 @@ import (
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 )
@@ -39,10 +38,18 @@ func (r *objectReplicator) Synced() bool {
 	return r.namespaceController.HasSynced() && r.objectController.HasSynced()
 }
 
-func (r *objectReplicator) Start() {
+func (r *objectReplicator) Start() func() {
 	log.Printf("running %s object controller", r.Name)
-	go r.namespaceController.Run(wait.NeverStop)
-	go r.objectController.Run(wait.NeverStop)
+	namespaceStop := make(chan struct{}, 1)
+	objectStop := make(chan struct{}, 1)
+	go r.namespaceController.Run(namespaceStop)
+	go r.objectController.Run(objectStop)
+	return func () {
+		log.Printf("stopping %s object controller", r.Name)
+		// stop := fmt.Errorf("stopping %s object controller", r.Name)
+		namespaceStop <- struct{}{}
+		objectStop <- struct{}{}
+	}
 }
 
 // Inits the structure with empty maps
@@ -103,15 +110,14 @@ func (r *objectReplicator) InitObjectStore(resyncPeriod time.Duration, objectsIn
 			ListFunc: func(lo metav1.ListOptions) (runtime.Object, error) {
 				// list, err := objectsInterface.List(lo)
 				resp := listFunc.Call([]reflect.Value{reflect.ValueOf(lo)})
-				err := resp[1].Interface().(error)
-				if err != nil {
-					return nil, err
+				if !resp[1].IsNil() {
+					return nil, resp[1].Interface().(error)
 				}
 				// populate the store already, to avoid believing some items are deleted
 				// for index := range list.Items {
 				// 	copy[index] = &list.Items[index]
 				// }
-				items := resp[1].FieldByName("Items")
+				items := resp[0].Elem().FieldByName("Items")
 				length := items.Len()
 				copy := make([]interface{}, length)
 				for index := 0; index < length; length ++ {
@@ -119,13 +125,16 @@ func (r *objectReplicator) InitObjectStore(resyncPeriod time.Duration, objectsIn
 				}
 				r.objectStore.Replace(copy, "init")
 				// return list, err
-				return resp[0].Interface().(runtime.Object), err
+				return resp[0].Interface().(runtime.Object), nil
 			},
 			WatchFunc: func(lo metav1.ListOptions) (watch.Interface, error) {
 				// watch, err := objectsInterface.Watch(lo)
 				resp := watchFunc.Call([]reflect.Value{reflect.ValueOf(lo)})
+				if !resp[1].IsNil() {
+					return nil, resp[1].Interface().(error)
+				}
 				// return watch, err
-				return resp[0].Interface().(watch.Interface), resp[1].Interface().(error)
+				return resp[0].Interface().(watch.Interface), nil
 			},
 		},
 		objectType,
@@ -303,9 +312,41 @@ Targets:
 	delete(r.watchedTargets, key)
 	delete(r.watchedPatterns, key)
 	// check for object having dependencies, and update them
-	if replicas, ok := r.targetsFrom[key]; ok {
+	if replicas, ok := r.targetsFrom[key]; ok && len(replicas) > 0 {
 		log.Printf("%s %s has %d dependents", r.Name, key, len(replicas))
-		r.updateDependents(object, replicas)
+		// sort the replicas to get rid of duplicates
+		sort.Strings(replicas)
+		updatedReplicas := []string{}
+		var previous string
+
+		for _, dependentKey := range replicas {
+			// get rid of dupplicates in replicas
+			if previous == dependentKey {
+				continue
+			}
+			previous = dependentKey
+			// get the target
+			targetObject, targetMeta, err := r.objectFromStore(dependentKey)
+			if err != nil {
+				log.Printf("could not load dependent %s: %s", r.Name, err)
+				continue
+			}
+			// check that the target still wants to replicate the object
+			if val, ok := resolveAnnotation(targetMeta, ReplicateFromAnnotation); !ok || val != key {
+				log.Printf("annotation of dependent %s %s changed", r.Name, dependentKey)
+				continue
+			}
+			// this target still wants to replicate the object
+			updatedReplicas = append(updatedReplicas, dependentKey)
+			// replicate the object again
+			r.replicateObject(targetObject, object)
+		}
+		// save the new replicas list
+		if len(updatedReplicas) > 0 {
+			r.targetsFrom[key] = updatedReplicas
+		} else {
+			delete(r.targetsFrom, key)
+		}
 	}
 	// this object was replicated by another, update it
 	if val, ok := meta.Annotations[ReplicatedByAnnotation]; ok {
@@ -441,10 +482,15 @@ Targets:
 func (r *objectReplicator) replicateObject(object interface{}, sourceObject  interface{}) error {
 	meta := r.getMeta(object)
 	sourceMeta := r.getMeta(sourceObject)
+	_, replicated := meta.Annotations[ReplicatedFromVersionAnnotation]
 	// make sure replication is allowed
-	if ok, err := r.isReplicationAllowed(meta, sourceMeta); !ok {
+	if ok, disallowed, err := r.isReplicationAllowed(meta, sourceMeta); !ok {
 		log.Printf("replication of %s %s/%s is cancelled: %s", r.Name, meta.Namespace, meta.Name, err)
-		return err
+		if disallowed && replicated {
+			return r.doClearObject(object, "source disallowed")
+		} else {
+			return err
+		}
 	}
 	// check if replication is needed
 	if ok, _, err := r.needsDataUpdate(meta, sourceMeta); !ok {
@@ -648,47 +694,6 @@ func (r *objectReplicator) objectFromStore(key string) (interface{}, *metav1.Obj
 	}
 }
 
-// Update all the objects that are replicating the data of the given object
-func (r *objectReplicator) updateDependents(object interface{}, replicas []string) error {
-	meta := r.getMeta(object)
-	key := fmt.Sprintf("%s/%s", meta.Namespace, meta.Name)
-	// sort the replicas to get rid of duplicates
-	sort.Strings(replicas)
-	updatedReplicas := make([]string, 0, 0)
-	var previous string
-
-	for _, dependentKey := range replicas {
-		// get rid of dupplicates in replicas
-		if previous == dependentKey {
-			continue
-		}
-		previous = dependentKey
-		// get the target
-		targetObject, targetMeta, err := r.objectFromStore(dependentKey)
-		if err != nil {
-			log.Printf("could not load dependent %s: %s", r.Name, err)
-			continue
-		}
-		// check that the target still wants to replicate the object
-		if val, ok := resolveAnnotation(targetMeta, ReplicateFromAnnotation); !ok || val != key {
-			log.Printf("annotation of dependent %s %s changed", r.Name, dependentKey)
-			continue
-		}
-		// this target still wants to replicate the object
-		updatedReplicas = append(updatedReplicas, dependentKey)
-		// replicate the object again
-		r.replicateObject(targetObject, object)
-	}
-	// save the new replicas list
-	if len(updatedReplicas) > 0 {
-		r.targetsFrom[key] = updatedReplicas
-	} else {
-		delete(r.targetsFrom, key)
-	}
-
-	return nil
-}
-
 // Called when an object is deleted
 // Has to check for several cases:
 //	- The object was replicated by other objects
@@ -731,6 +736,13 @@ func (r *objectReplicator) ObjectDeleted(object interface{}) {
 		} else {
 			delete(r.targetsFrom, key)
 		}
+	}
+	// If the namespace of the object does not exist anymore, cannot be replaced
+	if _, exists, err := r.namespaceStore.GetByKey(meta.Namespace); err != nil {
+		log.Printf("could not get namespace %s: %s", meta.Namespace, err)
+		return
+	} else if !exists {
+		return
 	}
 	// find which source want to replicate at this location, now that it's free
 	todo := map[string]bool{}

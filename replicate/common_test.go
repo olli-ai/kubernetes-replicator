@@ -16,6 +16,8 @@ func Test_isReplicationAllowed(t *testing.T) {
 		name        string
 		// if replication should be allowed
 		allowed     bool
+		// if replication is disallowed
+		disallowed  bool
 		// --allow-all global option
 		allowAll    bool
 		// target namespace
@@ -25,6 +27,7 @@ func Test_isReplicationAllowed(t *testing.T) {
 	}{{
 		"--allow-all",
 		true,
+		false,
 		true,
 		"target-namespace",
 		map[string]string{},
@@ -32,11 +35,13 @@ func Test_isReplicationAllowed(t *testing.T) {
 		"--allow-all but explicitely disallow",
 		false,
 		true,
+		true,
 		"target-namespace",
 		map[string]string{ReplicationAllowed: "false"},
 	},{
 		"--allow-all but restrict namespace",
 		false,
+		true,
 		true,
 		"target-namespace",
 		map[string]string{ReplicationAllowedNamespaces: "other-namespace"},
@@ -44,10 +49,12 @@ func Test_isReplicationAllowed(t *testing.T) {
 		"--allow-all but restrict namespace with pattern",
 		false,
 		true,
+		true,
 		"target-namespace",
 		map[string]string{ReplicationAllowedNamespaces: "other-.*"},
 	},{
 		"--allow-all but illformed annotation",
+		false,
 		false,
 		true,
 		"target-namespace",
@@ -55,11 +62,13 @@ func Test_isReplicationAllowed(t *testing.T) {
 	},{
 		"--allow-all but illformed namespaces annotation",
 		false,
+		false,
 		true,
 		"target-namespace",
 		map[string]string{ReplicationAllowedNamespaces: "(other"},
 	},{
 		"--allow-all but from annotation",
+		false,
 		false,
 		true,
 		"target-namespace",
@@ -68,11 +77,13 @@ func Test_isReplicationAllowed(t *testing.T) {
 		"explicitely allow",
 		true,
 		false,
+		false,
 		"target-namespace",
 		map[string]string{ReplicationAllowed: "true"},
 	},{
 		"explicitely allow namespace",
 		true,
+		false,
 		false,
 		"target-namespace",
 		map[string]string{ReplicationAllowedNamespaces: "target-namespace"},
@@ -80,17 +91,20 @@ func Test_isReplicationAllowed(t *testing.T) {
 		"explicitely allow namespace list",
 		true,
 		false,
+		false,
 		"target-namespace",
 		map[string]string{ReplicationAllowedNamespaces: "first-namespace,target-namespace,second-namespace"},
 	},{
 		"explicitely allow namespace pattern",
 		true,
 		false,
+		false,
 		"target-namespace",
 		map[string]string{ReplicationAllowedNamespaces: "target-.*"},
 	},{
 		"explicitely allow namespace pattern list",
 		true,
+		false,
 		false,
 		"target-namespace",
 		map[string]string{ReplicationAllowedNamespaces: "first-.*,target-.*,second-.*"},
@@ -109,13 +123,21 @@ func Test_isReplicationAllowed(t *testing.T) {
 			Namespace:   "source-namespace",
 			Annotations: example.annotations,
 		}
-		allowed, err := rep.isReplicationAllowed(target, source)
+		allowed, disallowed, err := rep.isReplicationAllowed(target, source)
 		if example.allowed {
 			assert.True(t, allowed, example.name)
+			assert.False(t, disallowed, example.name)
 			assert.NoError(t, err, example.name)
 		} else {
 			assert.False(t, allowed, example.name)
 			assert.Error(t, err, example.name)
+		}
+		if example.disallowed {
+			assert.False(t, allowed, example.name)
+			assert.True(t, disallowed, example.name)
+			assert.Error(t, err, example.name)
+		} else {
+			assert.False(t, disallowed, example.name)
 		}
 	}
 }

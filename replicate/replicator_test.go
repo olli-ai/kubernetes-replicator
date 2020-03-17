@@ -1,17 +1,22 @@
 package replicate
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMain(m *testing.M) {
-  log.SetOutput(ioutil.Discard)
+  if os.Getenv("LOG") != "true" {
+  	log.SetOutput(ioutil.Discard)
+  }
   os.Exit(m.Run())
 }
 
@@ -404,7 +409,7 @@ func TestToAnnotation(t *testing.T) {
 				vV, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
 				assert.Equal(t, "source-data", target.Data, example.testName)
 				if assert.True(t, atOk, example.testName) {
-					IsTimestamp(t, atV, example.name)
+					IsTimestamp(t, atV, example.testName)
 				}
 				if assert.True(t, byOk, example.testName) {
 					assert.Equal(t, source.Key(), byV, example.testName)
@@ -425,7 +430,7 @@ func TestToAnnotation(t *testing.T) {
 				vV, vOk = target.Annotations[ReplicatedFromVersionAnnotation]
 				assert.Equal(t, "source-data", target.Data, example.testName)
 				if assert.True(t, atOk, example.testName) {
-					IsTimestamp(t, atV, example.name)
+					IsTimestamp(t, atV, example.testName)
 				}
 				if assert.True(t, byOk, example.testName) {
 					assert.Equal(t, source.Key(), byV, example.testName)
@@ -493,7 +498,7 @@ func TestToAnnotation(t *testing.T) {
 			if target != nil && !assert.NoError(t, repl.DeleteFake(target), example.testName) {
 				return false
 			}
-			assert.Equal(t, calls, repl.Calls(), example.name)
+			assert.Equal(t, calls, repl.Calls(), example.testName)
 			return true
 		}
 		// try in different orders
@@ -643,7 +648,7 @@ func TestFromToAnnotation(t *testing.T) {
 		}
 		// create middle object, with the "replicate-to" annotation
 		middle := func (repl *FakeReplicator) bool {
-			key := example.targetNamespace + "/" + example.targetName
+			key := fmt.Sprintf("%s/%s", example.targetNamespace, example.targetName)
 			version := repl.Versions()[key]
 			err := repl.SetAddFake(NewFake(
 				example.middleNamespace,
@@ -900,4 +905,435 @@ func TestFromToAnnotation(t *testing.T) {
 			test(repl),
 			example.name)
 	}
+}
+
+// test replicate-to with many targets and data update
+func TestToAnnotation_ManyTargets(t *testing.T) {
+	beforeNs := []string {
+		"source-namespace",
+		"other-namespace",
+		"pattern-ns1",
+		"namespace-123",
+		"namespace-abc",
+	}
+	beforeKeys := []string {
+		"other-namespace/other-name",
+		"pattern-ns1/pattern-name",
+		"namespace-123/target-name1",
+		"namespace-123/target-name2",
+	}
+	afterNs := []string {
+		"target-namespace",
+		"pattern-ns2",
+		"namespace-456",
+		"namespace-xyz",
+	}
+	afterKeys := []string {
+		"target-namespace/target-name1",
+		"target-namespace/target-name2",
+		"pattern-ns2/pattern-name",
+		"namespace-456/target-name1",
+		"namespace-456/target-name2",
+	}
+	repl := NewFakeReplicator(false)
+
+	var err error
+	source := NewFake("source-namespace", "source-name", "before-data",
+		map[string]string {
+			ReplicateToAnnotation: "pattern-.*/pattern-name,target-name1,target-name2,other-namespace/other-name",
+			ReplicateToNamespacesAnnotation: "target-namespace,namespace-[0-9]+",
+		})
+	calls := 0
+	for _, ns := range beforeNs {
+		require.NoError(t, repl.AddNamespace(ns))
+	}
+	assert.Equal(t, calls, repl.Calls())
+	calls = repl.Calls() + len(beforeKeys)
+	require.NoError(t, repl.SetAddFake(source))
+	assert.Equal(t, calls, repl.Calls())
+	calls = repl.Calls()
+	expected := map[string]bool {"source-namespace/source-name": true}
+	for _, key := range beforeKeys {
+		expected[key] = true
+	}
+	found := map[string]bool{}
+	for key, _ := range repl.Versions() {
+		found[key] = true
+		if key == source.Key() {
+			continue
+		}
+		keys := strings.Split(key, "/")
+		fake, err := repl.GetFake(keys[0], keys[1])
+		if !assert.NoError(t, err, key) || !assert.NotNil(t, fake, key) {
+			continue
+		}
+		assert.Equal(t, source.Data, fake.Data, key)
+		atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
+		byV, byOk := fake.Annotations[ReplicatedByAnnotation]
+		vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+		if assert.True(t, atOk, key) {
+			IsTimestamp(t, atV, key)
+		}
+		if assert.True(t, byOk, key) {
+			assert.Equal(t, source.Key(), byV, key)
+		}
+		if assert.True(t, vOk, key) {
+			assert.Equal(t, source.ResourceVersion, vV, key)
+		}
+	}
+	assert.Equal(t, expected, found)
+
+	calls += len(beforeKeys)
+	source, err = repl.UpdateAddFake(source, "after-data", nil)
+	require.NoError(t, err)
+	assert.Equal(t, calls, repl.Calls())
+	calls = repl.Calls() + len(afterKeys)
+	for _, ns := range afterNs {
+		require.NoError(t, repl.AddNamespace(ns))
+	}
+	assert.Equal(t, calls, repl.Calls())
+	for _, key := range afterKeys {
+		expected[key] = true
+	}
+	found = map[string]bool{}
+	for key, _ := range repl.Versions() {
+		found[key] = true
+		if key == source.Key() {
+			continue
+		}
+		keys := strings.Split(key, "/")
+		fake, err := repl.GetFake(keys[0], keys[1])
+		if !assert.NoError(t, err, key) || !assert.NotNil(t, fake, key) {
+			continue
+		}
+		assert.Equal(t, source.Data, fake.Data, key)
+		atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
+		byV, byOk := fake.Annotations[ReplicatedByAnnotation]
+		vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+		if assert.True(t, atOk, key) {
+			IsTimestamp(t, atV, key)
+		}
+		if assert.True(t, byOk, key) {
+			assert.Equal(t, source.Key(), byV, key)
+		}
+		if assert.True(t, vOk, key) {
+			assert.Equal(t, source.ResourceVersion, vV, key)
+		}
+	}
+	assert.Equal(t, expected, found)
+}
+
+// test replicate-to annotation while updated
+func TestToAnnotation_AnnotaionsUpdate(t *testing.T) {
+	repl := NewFakeReplicator(false)
+	err := repl.InitNamespaces([]string {"ns1", "ns2", "ns3", "ns4", "ns5"})
+	require.NoError(t, err)
+
+	test := func (source *FakeObject) map[string]bool {
+		found := map[string]bool {}
+		for key, _ := range repl.Versions() {
+			if key == source.Key() {
+				continue
+			}
+			found[key] = true
+			keys := strings.Split(key, "/")
+			fake, err := repl.GetFake(keys[0], keys[1])
+			if !assert.NoError(t, err, key) || !assert.NotNil(t, fake, key) {
+				continue
+			}
+			assert.Equal(t, source.Data, fake.Data, key)
+			atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
+			byV, byOk := fake.Annotations[ReplicatedByAnnotation]
+			vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+			if assert.True(t, atOk, key) {
+				IsTimestamp(t, atV, key)
+			}
+			if assert.True(t, byOk, key) {
+				assert.Equal(t, source.Key(), byV, key)
+			}
+			if assert.True(t, vOk, key) {
+				assert.Equal(t, source.ResourceVersion, vV, key)
+			}
+		}
+		return found
+	}
+
+	source := NewFake("source-namespace", "source-name", "data1",
+		map[string]string {
+			ReplicateToAnnotation: "target-name",
+			ReplicateToNamespacesAnnotation: "ns2,ns3,ns5",
+		})
+	err = repl.SetAddFake(source)
+	require.NoError(t, err)
+	calls := 3
+	assert.Equal(t, calls, repl.Calls())
+	calls = repl.Calls()
+	expected := map[string]bool {
+		"ns2/target-name": true,
+		"ns3/target-name": true,
+		"ns5/target-name": true,
+	}
+	found := test(source)
+	assert.Equal(t, expected, found)
+
+	source, err = repl.UpdateAddFake(source, "data2", map[string]string {
+		ReplicateToAnnotation: "target-name,ns5/other-name",
+		ReplicateToNamespacesAnnotation: "ns2,ns4",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, calls+5, repl.Calls())
+	calls = repl.Calls()
+	expected = map[string]bool {
+		"ns2/target-name": true,
+		"ns4/target-name": true,
+		"ns5/other-name": true,
+	}
+	found = test(source)
+	assert.Equal(t, expected, found)
+
+	source, err = repl.UpdateAddFake(source, "data3", map[string]string {
+		ReplicateToAnnotation: "target-name",
+		ReplicateToNamespacesAnnotation: "ns[1-4]",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, calls+5, repl.Calls())
+	calls = repl.Calls()
+	expected = map[string]bool {
+		"ns1/target-name": true,
+		"ns2/target-name": true,
+		"ns3/target-name": true,
+		"ns4/target-name": true,
+	}
+	found = test(source)
+	assert.Equal(t, expected, found)
+}
+
+// test replicate-to annotation while targets exist
+func TestToAnnotation_TargetExists(t *testing.T) {
+	repl := NewFakeReplicator(false)
+	source := NewFake("source-namespace", "source-name", "source-data",
+		map[string]string {
+			ReplicateToAnnotation: "target-name",
+			ReplicateToNamespacesAnnotation: "ns.*",
+		})
+
+	test := func (source *FakeObject, expected map[string]bool) {
+		found := map[string]bool{}
+		for key, _ := range repl.Versions() {
+			if key == source.Key() {
+				continue
+			}
+			exp, ok := expected[key]
+			found[key] = exp
+			if !ok {
+				continue
+			}
+			keys := strings.Split(key, "/")
+			if !exp {
+				fake, err := repl.GetStoreFake(keys[0], keys[1])
+				if assert.NoError(t, err, key) && fake != nil {
+					assert.Equal(t, fake.Namespace + "-data", fake.Data, key)
+				}
+				continue
+			}
+			fake, err := repl.GetFake(keys[0], keys[1])
+			if !assert.NoError(t, err, key) || !assert.NotNil(t, fake, key) {
+				continue
+			}
+			assert.Equal(t, source.Data, fake.Data, key)
+			atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
+			byV, byOk := fake.Annotations[ReplicatedByAnnotation]
+			vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+			if assert.True(t, atOk, key) {
+				IsTimestamp(t, atV, key)
+			}
+			if assert.True(t, byOk, key) {
+				assert.Equal(t, source.Key(), byV, key)
+			}
+			if assert.True(t, vOk, key) {
+				assert.Equal(t, source.ResourceVersion, vV, key)
+			}
+		}
+		assert.Equal(t, expected, found)
+	}
+	calls := 0
+
+	require.NoError(t, repl.InitNamespaces([]string {"ns1", "ns2", "ns3"}))
+	fake2 := NewFake("ns2", "target-name", "ns2-data", nil)
+	fake3 := NewFake("ns3", "target-name", "ns3-data", nil)
+	require.NoError(t, repl.SetAddFake(fake2))
+	require.NoError(t, repl.SetFake(fake3))
+	require.NoError(t, repl.SetAddFake(source))
+	assert.Equal(t, calls + 2, repl.Calls())
+	calls = repl.Calls()
+	test(source, map[string]bool{
+		"ns1/target-name": true,
+		"ns2/target-name": false,
+		"ns3/target-name": false,
+	})
+
+	require.NoError(t, repl.UnsetDeleteFake(fake2))
+	require.NoError(t, repl.UnsetDeleteFake(fake3))
+	fake5 := NewFake("ns5", "target-name", "ns5-data", nil)
+	fake6 := NewFake("ns6", "target-name", "ns6-data", nil)
+	require.NoError(t, repl.SetAddFake(fake5))
+	require.NoError(t, repl.SetFake(fake6))
+	require.NoError(t, repl.AddNamespace("ns4"))
+	require.NoError(t, repl.AddNamespace("ns5"))
+	require.NoError(t, repl.AddNamespace("ns6"))
+	assert.Equal(t, calls + 4, repl.Calls())
+	calls = repl.Calls()
+	test(source, map[string]bool{
+		"ns1/target-name": true,
+		"ns2/target-name": true,
+		"ns3/target-name": true,
+		"ns4/target-name": true,
+		"ns5/target-name": false,
+		"ns6/target-name": false,
+	})
+
+	if fake1, err := repl.GetFake("ns1", "target-name");
+			assert.NoError(t, err) && assert.NotNil(t, fake1) {
+		_, err := repl.UpdateAddFake(fake1, "ns1-data", map[string]string{})
+		require.NoError(t, err)
+	}
+	if fake2, err := repl.GetFake("ns2", "target-name");
+			assert.NoError(t, err) && assert.NotNil(t, fake2) {
+		require.NoError(t, repl.UnsetDeleteFake(fake2))
+	}
+	if fake3, err := repl.GetFake("ns3", "target-name");
+			assert.NoError(t, err) && assert.NotNil(t, fake3) {
+		require.NoError(t, repl.DeleteFake(fake3))
+	}
+	if fakes, err := repl.DeleteNamespace("ns4");
+			assert.NoError(t, err) && assert.Len(t, fakes, 1) &&
+			assert.Equal(t, "ns4", fakes[0].Namespace) &&
+			assert.Equal(t, "target-name", fakes[0].Name) {
+		require.NoError(t, repl.UnsetDeleteFake(fakes[0]))
+	}
+	assert.Equal(t, calls + 2, repl.Calls())
+	calls = repl.Calls()
+	test(source, map[string]bool{
+		"ns1/target-name": false,
+		"ns2/target-name": true,
+		"ns3/target-name": false,
+		"ns5/target-name": false,
+		"ns6/target-name": false,
+	})
+
+	require.NoError(t, repl.AddNamespace("ns4"))
+	assert.Equal(t, calls + 1, repl.Calls())
+	calls = repl.Calls()
+	test(source, map[string]bool{
+		"ns1/target-name": false,
+		"ns2/target-name": true,
+		"ns3/target-name": false,
+		"ns4/target-name": true,
+		"ns5/target-name": false,
+		"ns6/target-name": false,
+	})
+
+	require.NoError(t, repl.UnsetDeleteFake(source))
+	require.NoError(t, repl.AddNamespace("ns7"))
+	require.NoError(t, repl.UnsetDeleteFake(fake5))
+	require.NoError(t, repl.UnsetDeleteFake(fake6))
+	assert.Equal(t, calls + 2, repl.Calls())
+	calls = repl.Calls()
+	test(source, map[string]bool{
+		"ns1/target-name": false,
+		"ns3/target-name": false,
+	})
+}
+
+// test replicate-from annotation while the source or target is updated
+func TestFromAnnotation_Updates(t *testing.T) {
+	repl := NewFakeReplicator(false)
+	test := func (source *FakeObject) {
+		target, err := repl.GetFake("target-namespace", "target-name")
+		if !assert.NoError(t, err) || !assert.NotNil(t, target) {
+			return
+		}
+		atV, atOk := target.Annotations[ReplicatedAtAnnotation]
+		vV, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
+		if assert.True(t, atOk) {
+			IsTimestamp(t, atV)
+		}
+		if source != nil {
+			assert.Equal(t, source.Data, target.Data)
+			if assert.True(t, vOk) {
+				assert.Equal(t, source.ResourceVersion, vV)
+			}
+		} else {
+			assert.Equal(t, "", target.Data)
+			assert.False(t, vOk)
+		}
+	}
+	calls := 0
+
+	target := NewFake("target-namespace", "target-name", "target-data",
+		map[string]string {
+			ReplicateFromAnnotation: "source-namespace/source1",
+		})
+	require.NoError(t, repl.SetAddFake(target))
+	assert.Equal(t, calls, repl.Calls())
+	calls = repl.Calls()
+
+	source1 := NewFake("source-namespace", "source1", "data1", nil)
+	require.NoError(t, repl.SetAddFake(source1))
+	assert.Equal(t, calls, repl.Calls())
+	calls = repl.Calls()
+
+	source1, err := repl.UpdateAddFake(source1, "data1", map[string]string {
+		ReplicationAllowed: "true",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, calls + 1, repl.Calls())
+	calls = repl.Calls()
+	test(source1)
+
+	source2 := NewFake("source-namespace", "source2", "data2",
+		map[string]string {
+			ReplicationAllowed: "true",
+		})
+	require.NoError(t, repl.SetAddFake(source2))
+	target, err = repl.GetFake("target-namespace", "target-name")
+	require.NoError(t, err)
+	require.NotNil(t, target)
+	_, err = repl.UpdateAddFake(target, "", map[string]string {
+		ReplicateFromAnnotation: "source-namespace/source2",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, calls + 1, repl.Calls())
+	calls = repl.Calls()
+	test(source2)
+
+	source2, err = repl.UpdateAddFake(source2, "data3", nil)
+	require.NoError(t, err)
+	assert.Equal(t, calls + 1, repl.Calls())
+	calls = repl.Calls()
+	test(source2)
+
+	source2, err = repl.UpdateAddFake(source2, "data2", map[string]string {
+		ReplicationAllowed: "false",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, calls + 1, repl.Calls())
+	calls = repl.Calls()
+	test(nil)
+
+	target, err = repl.GetFake("target-namespace", "target-name")
+	require.NoError(t, err)
+	require.NotNil(t, target)
+	_, err = repl.UpdateAddFake(target, "", map[string]string {
+		ReplicateFromAnnotation: "source-namespace/source1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, calls + 1, repl.Calls())
+	calls = repl.Calls()
+	test(source1)
+
+	require.NoError(t, repl.UnsetDeleteFake(source1))
+	assert.Equal(t, calls + 1, repl.Calls())
+	calls = repl.Calls()
+	test(nil)
 }
