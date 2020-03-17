@@ -11,32 +11,39 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// A verion number, continously incremented
+var fakeVersion uint64 = 1
+// A simplified Kubernetes object, for tests
+// It has a version, changed at each update
 type FakeObject struct {
 	metav1.ObjectMeta
 	Data      string
 	Version   uint64
 }
-
+// Creates a new fake object
 func NewFake(namespace string, name string, data string, annotations map[string]string) *FakeObject {
-	if annotations == nil {
-		annotations = map[string]string{}
+	copy := map[string]string{}
+	for k, v := range annotations {
+		copy[k] = v
 	}
+	version := fakeVersion
+	fakeVersion ++
 	return &FakeObject {
 		ObjectMeta: metav1.ObjectMeta {
 			Namespace:       namespace,
 			Name:            name,
-			Annotations:     annotations,
-			ResourceVersion: "0",
+			Annotations:     copy,
+			ResourceVersion: strconv.FormatUint(version, 10),
 		},
 		Data:    data,
-		Version: 0,
+		Version: version,
 	}
 }
-
+// The store key for the fake object "{namespace}/{name}"
 func (f *FakeObject) Key() string {
 	return fmt.Sprintf("%s/%s", f.Namespace, f.Name)
 }
-
+// A deep copy of a fake object
 func (f *FakeObject) DeepCopy() *FakeObject {
 	return &FakeObject{
 		ObjectMeta: *f.ObjectMeta.DeepCopy(),
@@ -44,28 +51,50 @@ func (f *FakeObject) DeepCopy() *FakeObject {
 		Version:    f.Version,
 	}
 }
-
+// Creates an updated fake object, with a new version
 func (f *FakeObject) Update(data string, annotations map[string]string) *FakeObject {
 	fake := &FakeObject{
 		ObjectMeta: *f.ObjectMeta.DeepCopy(),
-		Data:       f.Data,
-		Version:    f.Version + 1,
+		Data:       data,
+		Version:    fakeVersion,
 	}
-	if annotations != nil {
-		fake.Annotations = annotations
+	fakeVersion ++
+	if annotations == nil {
+		annotations = f.Annotations
 	}
-	fake.ResourceVersion = fmt.Sprintf("%d", fake.Version)
+	copy := map[string]string{}
+	for k, v := range annotations {
+		copy[k] = v
+	}
+	fake.Annotations = copy
+	fake.ResourceVersion = strconv.FormatUint(fake.Version, 10)
 	return fake
 }
-
+// Methods to implement runtime.Object
 func (*FakeObject) GetObjectKind() schema.ObjectKind { return nil }
 func (f *FakeObject) DeepCopyObject() runtime.Object { return f.DeepCopy() }
 
+// replicatorActions for fake objects
+// Stores the version of each object, and the list of successfully performed actions
 type FakeReplicatorActions struct {
 	Versions map[string]uint64
 	Actions  []FakeAction
+	Calls    uint64
 }
-
+// The 3 different types of actions
+const (
+	ActionUpdate = "update"
+	ActionCreate = "create"
+	ActionDelete = "delete"
+)
+// An action object, used for assersions
+type FakeAction struct {
+	key         string
+	action      string
+	data        string
+	annotations map[string]string
+}
+// Returns an interface{} as a fake object, and checks its version
 func (a *FakeReplicatorActions) getObject(object interface{}) (*FakeObject, error) {
 	fake := object.(*FakeObject)
 	if v, ok := a.Versions[fake.Key()]; !ok || v != fake.Version {
@@ -73,10 +102,10 @@ func (a *FakeReplicatorActions) getObject(object interface{}) (*FakeObject, erro
 	}
 	return fake, nil
 }
-
+// Stores a new action
 func (a *FakeReplicatorActions) newAction(action string, fake *FakeObject) {
 	var act FakeAction
-	if action == FakeDelete {
+	if action == ActionDelete {
 		act = FakeAction {
 			key:         fake.Key(),
 			action:      action,
@@ -95,34 +124,37 @@ func (a *FakeReplicatorActions) newAction(action string, fake *FakeObject) {
 	}
 	a.Actions = append(a.Actions, act)
 }
-
+// Returns the ObjectMeta of a fake object
 func (*FakeReplicatorActions) getMeta(object interface{}) *metav1.ObjectMeta {
 	return &object.(*FakeObject).ObjectMeta
 }
-
+// Updates a fake object is the version is right, and stores the action
 func (a *FakeReplicatorActions) update(r *replicatorProps, object interface{}, sourceObject interface{}, annotations map[string]string) (interface{}, error) {
+	a.Calls ++
 	fake, err := a.getObject(object)
 	if err != nil {
 		return fake, err
 	}
 	fake = fake.Update(sourceObject.(*FakeObject).Data, annotations)
 	a.Versions[fake.Key()] = fake.Version
-	a.newAction(FakeUpdate, fake)
+	a.newAction(ActionUpdate, fake)
 	return fake, nil
 }
-
+// Clears a fake object is the version is right, and stores the action
 func (a *FakeReplicatorActions) clear(r *replicatorProps, object interface{}, annotations map[string]string) (interface{}, error) {
+	a.Calls ++
 	fake, err := a.getObject(object)
 	if err != nil {
 		return fake, err
 	}
 	fake = fake.Update("", annotations)
 	a.Versions[fake.Key()] = fake.Version
-	a.newAction(FakeUpdate, fake)
+	a.newAction(ActionUpdate, fake)
 	return fake, nil
 }
-
+// Installs a fake object is the version is right, and stores the action
 func (a *FakeReplicatorActions) install(r *replicatorProps, meta *metav1.ObjectMeta, sourceObject interface{}, dataObject interface{}) (interface{}, error) {
+	a.Calls ++
 	var action string
 	fake := &FakeObject {
 		ObjectMeta: *meta,
@@ -131,8 +163,7 @@ func (a *FakeReplicatorActions) install(r *replicatorProps, meta *metav1.ObjectM
 		if v, ok := a.Versions[fake.Key()]; ok {
 			return nil, fmt.Errorf("incompatible update for fake object %s: already exists with version %d", fake.Key(), v)
 		} else {
-			fake.Version = 0
-			action = FakeCreate
+			action = ActionCreate
 		}
 	} else {
 		if version, err := strconv.ParseUint("42", 10, 64); err != nil {
@@ -140,11 +171,12 @@ func (a *FakeReplicatorActions) install(r *replicatorProps, meta *metav1.ObjectM
 		} else if v, ok := a.Versions[fake.Key()]; !ok || v != version {
 			return nil, fmt.Errorf("incompatible update for fake object %s: latest version %d, but %d provided", fake.Key(), v, version)
 		} else {
-			fake.Version = version + 1
-			action = FakeUpdate
+			action = ActionUpdate
 		}
 	}
-	fake.ResourceVersion = fmt.Sprintf("%d", fake.Version)
+	fake.Version = fakeVersion
+	fakeVersion ++
+	fake.ResourceVersion = strconv.FormatUint(fake.Version, 10)
 	if dataObject != nil {
 		fake.Data = dataObject.(*FakeObject).Data
 	}
@@ -152,34 +184,22 @@ func (a *FakeReplicatorActions) install(r *replicatorProps, meta *metav1.ObjectM
 	a.newAction(action, fake)
 	return fake, nil
 }
-
+// Deletes a fake object is the version is right, and stores the action
 func (a *FakeReplicatorActions) delete(r *replicatorProps, object interface{}) error {
+	a.Calls ++
 	fake, err := a.getObject(object)
 	if err != nil {
 		return err
 	}
 	delete(a.Versions, fake.Key())
-	a.newAction(FakeDelete, fake)
+	a.newAction(ActionDelete, fake)
 	return nil
 }
-
-const (
-	FakeUpdate = "update"
-	FakeCreate = "create"
-	FakeDelete = "delete"
-)
-
-type FakeAction struct {
-	key         string
-	action      string
-	data        string
-	annotations map[string]string
-}
-
+// The objectReplicator for fake objects
 type FakeReplicator struct {
 	objectReplicator
 }
-
+// KeyFunc for the fake objects store
 func fakeKeyFunc(obj interface{}) (string, error) {
 	if fake, ok := obj.(*FakeObject); !ok {
 		return "", fmt.Errorf("cannot convert to fake object")
@@ -187,7 +207,7 @@ func fakeKeyFunc(obj interface{}) (string, error) {
 		return fake.Key(), nil
 	}
 }
-
+// KeyFunc for the namespaces store
 func namespaceKeyFunc(obj interface{}) (string, error) {
 	if ns, ok := obj.(*v1.Namespace); !ok {
 		return "", fmt.Errorf("cannot convert to namespace")
@@ -195,7 +215,7 @@ func namespaceKeyFunc(obj interface{}) (string, error) {
 		return ns.Name, nil
 	}
 }
-
+// Create a objectReplicator for fake objects
 func NewFakeReplicator(allowAll bool) *FakeReplicator {
 	objectStore := cache.NewStore(fakeKeyFunc)
 	namespaceStore := cache.NewStore(namespaceKeyFunc)
@@ -216,13 +236,21 @@ func NewFakeReplicator(allowAll bool) *FakeReplicator {
 	repl.InitStructure()
 	return repl
 }
-
+// Returns the versions map from the FakeReplicatorActions
 func (r *FakeReplicator) Versions() map[string]uint64 {
 	return r.replicatorActions.(*FakeReplicatorActions).Versions
 }
-
+// Returns the actions list from the FakeReplicatorActions
 func (r *FakeReplicator) Actions() []FakeAction {
 	return r.replicatorActions.(*FakeReplicatorActions).Actions
+}
+// Returns the number of calls from FakeReplicatorActions
+func (r *FakeReplicator) Calls() uint64 {
+	return r.replicatorActions.(*FakeReplicatorActions).Calls
+}
+// List the fake keys in the store
+func (r *FakeReplicator) Keys() []string {
+	return r.objectStore.ListKeys()
 }
 
 // Fills the store with namespaces without notifying it
@@ -237,8 +265,7 @@ func (r *FakeReplicator) InitNamespaces(names []string) error {
 	}
 	return r.namespaceStore.Replace(ns, "init")
 }
-
-// Notify a new namespace
+// Notify a new namespace was created
 func (r *FakeReplicator) AddNamespace(name string) error {
 	ns := &v1.Namespace {
 		ObjectMeta: metav1.ObjectMeta {
@@ -251,7 +278,6 @@ func (r *FakeReplicator) AddNamespace(name string) error {
 	r.NamespaceAdded(ns)
 	return nil
 }
-
 // Deletes a namespace, returns the objects that should be deleted too
 func (r *FakeReplicator) DeleteNamespace(name string) ([]*FakeObject, error) {
 	fakes := []*FakeObject{}
@@ -283,22 +309,36 @@ func (r *FakeReplicator) InitFakes(fakes []*FakeObject) error {
 
 	return r.objectStore.Replace(objects, "init")
 }
-
-// Silently set the fake's version
+// Silently save the new fake's version
 func (r *FakeReplicator) SetFake(fake *FakeObject) error {
 	r.Versions()[fake.Key()] = fake.Version
 	return nil
 }
-
-func (r *FakeReplicator) GetFake(key string) (*FakeObject, error) {
-	fake, exists, err := r.objectStore.GetByKey(key)
-	if !exists && err == nil {
-		err = fmt.Errorf("fake object %s not in store", key)
+// Returns the fake object from the store if the version is right
+func (r *FakeReplicator) GetFake(namespace string, name string) (*FakeObject, error) {
+	key := fmt.Sprintf("%s/%s", namespace, name)
+	version, ok := r.Versions()[key]
+	object, exists, err := r.objectStore.GetByKey(key)
+	if err != nil {
+		return nil, err
+	} else if !exists {
+		if ok {
+			return nil, fmt.Errorf("fake object %s not in store, but version %d saved", key, version)
+		} else {
+			return nil, nil
+		}
+	} else {
+		fake := object.(*FakeObject)
+		if !ok {
+			return nil, fmt.Errorf("fake object %s in store with version %d, but not saved", key, fake.Version)
+		} else if version != fake.Version {
+			return nil, fmt.Errorf("fake object %s in store with version %d, but version %d saved", key, fake.Version, version)
+		} else {
+			return fake, nil
+		}
 	}
-	return fake.(*FakeObject), err
 }
-
-// Notify a new Fake
+// Notifies a new Fake
 func (r *FakeReplicator) AddFake(fake *FakeObject) error {
 	if err := r.objectStore.Add(fake); err != nil {
 		return err
@@ -306,18 +346,18 @@ func (r *FakeReplicator) AddFake(fake *FakeObject) error {
 	r.ObjectAdded(fake)
 	return nil
 }
-
+// Save and notify a new fake
 func (r *FakeReplicator) SetAddFake(fake *FakeObject) error {
 	r.Versions()[fake.Key()] = fake.Version
 	return r.AddFake(fake)
 }
-
+// Silently update the fake's data
 func (r *FakeReplicator) UpdateFake(fake *FakeObject, data string, annotations map[string]string) (*FakeObject, error) {
 	fake = fake.Update(data, annotations)
 	r.Versions()[fake.Key()] = fake.Version
 	return fake, nil
 }
-
+// Update and notify a fake
 func (r *FakeReplicator) UpdateAddFake(fake *FakeObject, data string, annotations map[string]string) (*FakeObject, error) {
 	fake, err := r.UpdateFake(fake, data, annotations)
 	if err == nil {
@@ -325,14 +365,12 @@ func (r *FakeReplicator) UpdateAddFake(fake *FakeObject, data string, annotation
 	}
 	return fake, err
 }
-
-// Silently unset the fake's version
+// Silently remove the fake's version
 func (r *FakeReplicator) UnsetFake(fake *FakeObject) error {
 	delete(r.Versions(), fake.Key())
 	return nil
 }
-
-// Delete and notify fake
+// Notifies a deleted fake
 func (r *FakeReplicator) DeleteFake(fake *FakeObject) error {
 	if err := r.objectStore.Delete(fake); err != nil {
 		return err
@@ -340,7 +378,7 @@ func (r *FakeReplicator) DeleteFake(fake *FakeObject) error {
 	r.ObjectDeleted(fake)
 	return nil
 }
-
+// Remove a nd notifies a fake
 func (r *FakeReplicator) UnsetDeleteFake(fake *FakeObject) error {
 	delete(r.Versions(), fake.Key())
 	if err := r.objectStore.Delete(fake); err != nil {

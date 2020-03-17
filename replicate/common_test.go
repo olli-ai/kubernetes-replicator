@@ -12,10 +12,15 @@ import (
 
 func Test_isReplicationAllowed(t *testing.T) {
 	examples := [] struct {
+		// name of the test
 		name        string
+		// if replication should be allowed
 		allowed     bool
+		// --allow-all global option
 		allowAll    bool
+		// target namespace
 		namespace   string
+		// source annotations
 		annotations map[string]string
 	}{{
 		"--allow-all",
@@ -107,21 +112,27 @@ func Test_isReplicationAllowed(t *testing.T) {
 		allowed, err := rep.isReplicationAllowed(target, source)
 		if example.allowed {
 			assert.True(t, allowed, example.name)
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		} else {
 			assert.False(t, allowed, example.name)
-			assert.NotNil(t, err, example.name)
+			assert.Error(t, err, example.name)
 		}
 	}
 }
 
 func Test_needsDataUpdate(t *testing.T) {
 	examples := [] struct {
+		// name of the test
 		name    string
+		// if update is needed
 		needed  bool
+		// if update is not needed because of "once"
 		once    bool
+		// the source annotations
 		source  map[string]string
+		// the source resource version
 		version string
+		// the target annotations
 		target  map[string]string
 	}{{
 		"never replicated",
@@ -349,10 +360,10 @@ func Test_needsDataUpdate(t *testing.T) {
 		if example.needed {
 			assert.True(t, needed, example.name)
 			assert.False(t, once, example.name)
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		} else {
 			assert.False(t, needed, example.name)
-			assert.NotNil(t, err, example.name)
+			assert.Error(t, err, example.name)
 		}
 		if once {
 			assert.True(t, once, example.name)
@@ -364,10 +375,15 @@ func Test_needsDataUpdate(t *testing.T) {
 
 func Test_needsFromAnnotationsUpdate(t *testing.T) {
 	examples := [] struct {
+		// the name of the test
 		name   string
+		// if update is needed
 		needed bool
+		// if error is expected
 		err    bool
+		// the source annotations
 		source map[string]string
+		// the target annotations
 		target map[string]string
 	}{{
 		"same from annotation",
@@ -389,8 +405,8 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		map[string]string {},
 	},{
 		"no from annotation both",
-		true,
 		false,
+		true,
 		map[string]string {},
 		map[string]string {},
 	},{
@@ -520,14 +536,14 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		needed, err := rep.needsFromAnnotationsUpdate(target, source)
 		if example.needed {
 			assert.True(t, needed, example.name)
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		} else {
 			assert.False(t, needed, example.name)
 		}
 		if example.err {
-			assert.NotNil(t, err, example.name)
+			assert.Error(t, err, example.name)
 		} else {
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		}
 	}
 
@@ -548,15 +564,20 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 	}
 	needed, err := rep.needsFromAnnotationsUpdate(target, source)
 	assert.True(t, needed, "labels")
-	assert.Nil(t, err, "labels")
+	assert.NoError(t, err, "labels")
 }
 
 func Test_needsAllowedAnnotationsUpdate(t *testing.T) {
 	examples := [] struct {
+		// the name of the test
 		name   string
+		// if update is needed
 		needed bool
+		// if error is expected
 		err    bool
+		// the source annotations
 		source map[string]string
+		// the target annotations
 		target map[string]string
 	}{{
 		"no annotation",
@@ -631,14 +652,14 @@ func Test_needsAllowedAnnotationsUpdate(t *testing.T) {
 		needed, err := rep.needsAllowedAnnotationsUpdate(target, source)
 		if example.needed {
 			assert.True(t, needed, example.name)
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		} else {
 			assert.False(t, needed, example.name)
 		}
 		if example.err {
-			assert.NotNil(t, err, example.name)
+			assert.Error(t, err, example.name)
 		} else {
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		}
 	}
 
@@ -655,13 +676,16 @@ func Test_needsAllowedAnnotationsUpdate(t *testing.T) {
 	}
 	needed, err := rep.needsAllowedAnnotationsUpdate(target, source)
 	assert.True(t, needed, "labels")
-	assert.Nil(t, err, "labels")
+	assert.NoError(t, err, "labels")
 }
 
 func Test_isReplicatedBy(t *testing.T) {
 	examples := [] struct {
+		// the name of the test
 		name        string
+		// if is replicated by
 		replicated  bool
+		// the target annotations
 		annotations map[string]string
 	}{{
 		"not replicated",
@@ -692,21 +716,27 @@ func Test_isReplicatedBy(t *testing.T) {
 		replicated, err := rep.isReplicatedBy(target, source)
 		if example.replicated {
 			assert.True(t, replicated, example.name)
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		} else {
 			assert.False(t, replicated, example.name)
-			assert.NotNil(t, err, example.name)
+			assert.Error(t, err, example.name)
 		}
 	}
 }
 
 func Test_isReplicatedTo(t *testing.T) {
 	examples := [] struct {
+		// the name of the test
 		testName    string
+		// if is replicated to
 		replicated  bool
+		// if an error is exptected
 		err         bool
+		// the name of the target
 		name        string
+		// the namespace of the target
 		namespace   string
+		// the source annotations
 		annotations map[string]string
 	}{{
 		"not replicated",
@@ -894,27 +924,35 @@ func Test_isReplicatedTo(t *testing.T) {
 		replicated, err := rep.isReplicatedTo(source, target)
 		if example.replicated {
 			assert.True(t, replicated, example.testName)
-			assert.Nil(t, err, example.testName)
+			assert.NoError(t, err, example.testName)
 		} else {
 			assert.False(t, replicated, example.testName)
 		}
 		if example.err {
-			assert.NotNil(t, err, example.name)
+			assert.Error(t, err, example.name)
 		} else {
-			assert.Nil(t, err, example.name)
+			assert.NoError(t, err, example.name)
 		}
 	}
 }
 
 func Test_getReplicationTargets(t *testing.T) {
 	examples := [] struct {
+		// the name of the test
 		name         string
+		// if an error is exptec
 		err          bool
+		// the replicate-to annotation
 		to           string
+		// the replicate-to-namespaces annotation
 		toNamespaces string
+		// the expected targets
 		targets      []string
+		// matching tests for the target patters
 		match        map[string]bool
+		// namespace to pass the target patterns on
 		namespaces   []string
+		// expected targets from the target patterns
 		matchTargets []string
 	}{{
 		name: "error to",
@@ -1065,7 +1103,7 @@ func Test_getReplicationTargets(t *testing.T) {
 		}
 		targets, patterns, err := rep.getReplicationTargets(source)
 		if example.err {
-			assert.NotNil(t, err, example.name)
+			assert.Error(t, err, example.name)
 		}
 		if example.targets == nil {
 			assert.Empty(t, targets, example.name)
@@ -1130,8 +1168,11 @@ func Test_getReplicationTargets(t *testing.T) {
 
 func Test_resolveAnnotation(t *testing.T) {
 	examples := [] struct {
+		// the name of the test
 		name     string
+		// the value of the annotations
 		value    string
+		// the expected result ("" if an error is expected)
 		expected string
 	}{{
 		name: "absent",
@@ -1165,10 +1206,15 @@ func Test_resolveAnnotation(t *testing.T) {
 
 func Test_annotationRefersTo(t *testing.T) {
 	examples := [] struct {
+		// the name of the test
 		testName  string
+		// if the annotations refers to
 		refers    bool
+		// the value of the annotation
 		value     string
+		// the name of the reference tested
 		name      string
+		// the namespace of the reference tested
 		namespace string
 	}{{
 		"absent",
