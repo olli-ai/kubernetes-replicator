@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func Test_isReplicationAllowed(t *testing.T) {
+func Test_isReplicationAllowedAnnotation(t *testing.T) {
 	examples := [] struct {
 		// name of the test
 		name        string
@@ -37,77 +37,77 @@ func Test_isReplicationAllowed(t *testing.T) {
 		true,
 		true,
 		"target-namespace",
-		map[string]string{ReplicationAllowed: "false"},
+		map[string]string{ReplicationAllowedAnnotation: "false"},
 	},{
 		"--allow-all but restrict namespace",
 		false,
 		true,
 		true,
 		"target-namespace",
-		map[string]string{ReplicationAllowedNamespaces: "other-namespace"},
+		map[string]string{AllowedNamespacesAnnotation: "other-namespace"},
 	},{
 		"--allow-all but restrict namespace with pattern",
 		false,
 		true,
 		true,
 		"target-namespace",
-		map[string]string{ReplicationAllowedNamespaces: "other-.*"},
+		map[string]string{AllowedNamespacesAnnotation: "other-.*"},
 	},{
 		"--allow-all but illformed annotation",
 		false,
 		false,
 		true,
 		"target-namespace",
-		map[string]string{ReplicationAllowed: "other"},
+		map[string]string{ReplicationAllowedAnnotation: "other"},
 	},{
 		"--allow-all but illformed namespaces annotation",
 		false,
 		false,
 		true,
 		"target-namespace",
-		map[string]string{ReplicationAllowedNamespaces: "(other"},
+		map[string]string{AllowedNamespacesAnnotation: "(other"},
 	},{
 		"--allow-all but from annotation",
 		false,
 		false,
 		true,
 		"target-namespace",
-		map[string]string{ReplicateFromAnnotation: "other-object"},
+		map[string]string{ReplicationSourceAnnotation: "other-object"},
 	},{
 		"explicitely allow",
 		true,
 		false,
 		false,
 		"target-namespace",
-		map[string]string{ReplicationAllowed: "true"},
+		map[string]string{ReplicationAllowedAnnotation: "true"},
 	},{
 		"explicitely allow namespace",
 		true,
 		false,
 		false,
 		"target-namespace",
-		map[string]string{ReplicationAllowedNamespaces: "target-namespace"},
+		map[string]string{AllowedNamespacesAnnotation: "target-namespace"},
 	},{
 		"explicitely allow namespace list",
 		true,
 		false,
 		false,
 		"target-namespace",
-		map[string]string{ReplicationAllowedNamespaces: "first-namespace,target-namespace,second-namespace"},
+		map[string]string{AllowedNamespacesAnnotation: "first-namespace,target-namespace,second-namespace"},
 	},{
 		"explicitely allow namespace pattern",
 		true,
 		false,
 		false,
 		"target-namespace",
-		map[string]string{ReplicationAllowedNamespaces: "target-.*"},
+		map[string]string{AllowedNamespacesAnnotation: "target-.*"},
 	},{
 		"explicitely allow namespace pattern list",
 		true,
 		false,
 		false,
 		"target-namespace",
-		map[string]string{ReplicationAllowedNamespaces: "first-.*,target-.*,second-.*"},
+		map[string]string{AllowedNamespacesAnnotation: "first-.*,target-.*,second-.*"},
 	}}
 	for _, example := range examples {
 		rep := &replicatorProps {
@@ -123,7 +123,7 @@ func Test_isReplicationAllowed(t *testing.T) {
 			Namespace:   "source-namespace",
 			Annotations: example.annotations,
 		}
-		allowed, disallowed, err := rep.isReplicationAllowed(target, source)
+		allowed, disallowed, err := rep.isReplicationAllowedAnnotation(target, source)
 		if example.allowed {
 			assert.True(t, allowed, example.name)
 			assert.False(t, disallowed, example.name)
@@ -169,14 +169,14 @@ func Test_needsDataUpdate(t *testing.T) {
 		false,
 		map[string]string{},
 		"1",
-		map[string]string{ReplicatedFromVersionAnnotation: "1"},
+		map[string]string{ReplicatedVersionAnnotation: "1"},
 	},{
 		"wrong resource version",
 		true,
 		false,
 		map[string]string{},
 		"2",
-		map[string]string{ReplicatedFromVersionAnnotation: "1"},
+		map[string]string{ReplicatedVersionAnnotation: "1"},
 	},{
 		"replicate once (source), never replicated",
 		true,
@@ -190,7 +190,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		true,
 		map[string]string{ReplicateOnceAnnotation: "true"},
 		"2",
-		map[string]string{ReplicatedFromVersionAnnotation: "1"},
+		map[string]string{ReplicatedVersionAnnotation: "1"},
 	},{
 		"replicate once (source), lower once version",
 		true,
@@ -201,7 +201,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		},
 		"2",
 		map[string]string{
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "1.1.4",
 		},
 	},{
@@ -214,7 +214,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		},
 		"2",
 		map[string]string{
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "1.2.3",
 		},
 	},{
@@ -227,7 +227,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		},
 		"2",
 		map[string]string{
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "1.3.2",
 		},
 	},{
@@ -245,7 +245,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "true",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 		},
 	},{
 		"replicate once (target), lower once version",
@@ -257,7 +257,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "true",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "1.1.4",
 		},
 	},{
@@ -270,7 +270,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "true",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "1.2.3",
 		},
 	},{
@@ -283,7 +283,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "true",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "1.3.2",
 		},
 	},{
@@ -296,7 +296,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "false",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 		},
 	},{
 		"replicate once, target but not source",
@@ -308,7 +308,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "true",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 		},
 	},{
 		"illformed once annotation (source)",
@@ -320,7 +320,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		},
 		"2",
 		map[string]string{
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "2.2.2",
 		},
 	},{
@@ -333,7 +333,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "other",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "2.2.2",
 		},
 	},{
@@ -346,7 +346,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		"2",
 		map[string]string{
 			ReplicateOnceAnnotation: "true",
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "2.2.2",
 		},
 	},{
@@ -359,7 +359,7 @@ func Test_needsDataUpdate(t *testing.T) {
 		},
 		"2",
 		map[string]string{
-			ReplicatedFromVersionAnnotation: "1",
+			ReplicatedVersionAnnotation: "1",
 			ReplicateOnceVersionAnnotation: "other",
 		},
 	}}
@@ -412,17 +412,17 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		false,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 	},{
 		"no from annotation",
 		true,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 		map[string]string {},
 	},{
@@ -436,47 +436,47 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		true,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/other-object",
+			ReplicationSourceAnnotation: "data-namespace/other-object",
 		},
 	},{
 		"different from annotation namespace",
 		true,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "other-namespace/data-object",
+			ReplicationSourceAnnotation: "other-namespace/data-object",
 		},
 	},{
 		"same from annotation without namespace",
 		false,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-object",
+			ReplicationSourceAnnotation: "data-object",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "source-namespace/data-object",
+			ReplicationSourceAnnotation: "source-namespace/data-object",
 		},
 	},{
 		"different from annotation without namespace",
 		true,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-object",
+			ReplicationSourceAnnotation: "data-object",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "other-namespace/data-object",
+			ReplicationSourceAnnotation: "other-namespace/data-object",
 		},
 	},{
 		"illformed from annotation",
 		false,
 		true,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object/other",
+			ReplicationSourceAnnotation: "data-namespace/data-object/other",
 		},
 		map[string]string {},
 	},{
@@ -484,7 +484,7 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		false,
 		true,
 		map[string]string {
-			ReplicateFromAnnotation: "source-namespace/source-object",
+			ReplicationSourceAnnotation: "source-namespace/source-object",
 		},
 		map[string]string {},
 	},{
@@ -492,7 +492,7 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		false,
 		true,
 		map[string]string {
-			ReplicateFromAnnotation: "source-object",
+			ReplicationSourceAnnotation: "source-object",
 		},
 		map[string]string {},
 	},{
@@ -500,11 +500,11 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		false,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 			ReplicateOnceAnnotation: "true",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 			ReplicateOnceAnnotation: "true",
 		},
 	},{
@@ -512,22 +512,22 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		true,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 			ReplicateOnceAnnotation: "false",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 	},{
 		"different once annotation",
 		true,
 		false,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 			ReplicateOnceAnnotation: "true",
 		},
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 			ReplicateOnceAnnotation: "false",
 		},
 	},{
@@ -535,7 +535,7 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		false,
 		true,
 		map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 			ReplicateOnceAnnotation: "other",
 		},
 		map[string]string {},
@@ -574,14 +574,14 @@ func Test_needsFromAnnotationsUpdate(t *testing.T) {
 		Namespace:   "target-namespace",
 		Labels:      map[string]string {"wrong": "labels"},
 		Annotations: map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 	}
 	source := &metav1.ObjectMeta {
 		Name:        "source-object",
 		Namespace:   "source-namespace",
 		Annotations: map[string]string {
-			ReplicateFromAnnotation: "data-namespace/data-object",
+			ReplicationSourceAnnotation: "data-namespace/data-object",
 		},
 	}
 	needed, err := rep.needsFromAnnotationsUpdate(target, source)
@@ -611,49 +611,49 @@ func Test_needsAllowedAnnotationsUpdate(t *testing.T) {
 		"same allow annotation",
 		false,
 		false,
-		map[string]string {ReplicationAllowed: "true"},
-		map[string]string {ReplicationAllowed: "true"},
+		map[string]string {ReplicationAllowedAnnotation: "true"},
+		map[string]string {ReplicationAllowedAnnotation: "true"},
 	},{
 		"missing allow annotation",
 		true,
 		false,
-		map[string]string {ReplicationAllowed: "true"},
+		map[string]string {ReplicationAllowedAnnotation: "true"},
 		map[string]string {},
 	},{
 		"different allow annotation",
 		true,
 		false,
-		map[string]string {ReplicationAllowed: "false"},
-		map[string]string {ReplicationAllowed: "true"},
+		map[string]string {ReplicationAllowedAnnotation: "false"},
+		map[string]string {ReplicationAllowedAnnotation: "true"},
 	},{
 		"illformed allow annotation",
 		false,
 		true,
-		map[string]string {ReplicationAllowed: "other"},
+		map[string]string {ReplicationAllowedAnnotation: "other"},
 		map[string]string {},
 	},{
 		"same allow namespaces annotation",
 		false,
 		false,
-		map[string]string {ReplicationAllowedNamespaces: "same"},
-		map[string]string {ReplicationAllowedNamespaces: "same"},
+		map[string]string {AllowedNamespacesAnnotation: "same"},
+		map[string]string {AllowedNamespacesAnnotation: "same"},
 	},{
 		"missing allow namespaces annotation",
 		true,
 		false,
-		map[string]string {ReplicationAllowedNamespaces: "same"},
+		map[string]string {AllowedNamespacesAnnotation: "same"},
 		map[string]string {},
 	},{
 		"different allow namespaces annotation",
 		true,
 		false,
-		map[string]string {ReplicationAllowedNamespaces: "other"},
-		map[string]string {ReplicationAllowedNamespaces: "same"},
+		map[string]string {AllowedNamespacesAnnotation: "other"},
+		map[string]string {AllowedNamespacesAnnotation: "same"},
 	},{
 		"illformed allow namespaces annotation",
 		false,
 		true,
-		map[string]string {ReplicationAllowedNamespaces: "[other"},
+		map[string]string {AllowedNamespacesAnnotation: "[other"},
 		map[string]string {},
 	}}
 	rep := &replicatorProps {
@@ -689,12 +689,12 @@ func Test_needsAllowedAnnotationsUpdate(t *testing.T) {
 		Name:        "target-object",
 		Namespace:   "target-namespace",
 		Labels:      map[string]string {"wrong": "labels"},
-		Annotations: map[string]string {ReplicationAllowed: "true"},
+		Annotations: map[string]string {ReplicationAllowedAnnotation: "true"},
 	}
 	source := &metav1.ObjectMeta {
 		Name:        "source-object",
 		Namespace:   "source-namespace",
-		Annotations: map[string]string {ReplicationAllowed: "true"},
+		Annotations: map[string]string {ReplicationAllowedAnnotation: "true"},
 	}
 	needed, err := rep.needsAllowedAnnotationsUpdate(target, source)
 	assert.True(t, needed, "labels")
@@ -716,11 +716,11 @@ func Test_isReplicatedBy(t *testing.T) {
 	},{
 		"replicated",
 		true,
-		map[string]string{ReplicatedByAnnotation: "source-namespace/source-object"},
+		map[string]string{CreatedByAnnotation: "source-namespace/source-object"},
 	},{
 		"replicated by other",
 		false,
-		map[string]string{ReplicatedByAnnotation: "other-namespace/other-object"},
+		map[string]string{CreatedByAnnotation: "other-namespace/other-object"},
 	}}
 	rep := &replicatorProps {
 		Name:     "object",
@@ -774,7 +774,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "target-namespace/target-object",
+			ReplicationTargetsAnnotation: "target-namespace/target-object",
 		},
 	},{
 		"replicated list",
@@ -783,7 +783,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "first-namespace/first-object,target-namespace/target-object,last-namespace/last-object",
+			ReplicationTargetsAnnotation: "first-namespace/first-object,target-namespace/target-object,last-namespace/last-object",
 		},
 	},{
 		"not replicated (name)",
@@ -792,7 +792,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "target-namespace/other-object",
+			ReplicationTargetsAnnotation: "target-namespace/other-object",
 		},
 	},{
 		"not replicated (namespace)",
@@ -801,7 +801,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "other-namespace/target-object",
+			ReplicationTargetsAnnotation: "other-namespace/target-object",
 		},
 	},{
 		"replicated name",
@@ -810,7 +810,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"source-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "target-object",
+			ReplicationTargetsAnnotation: "target-object",
 		},
 	},{
 		"replicated name list",
@@ -819,7 +819,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"source-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "first-object,target-object,last-object",
+			ReplicationTargetsAnnotation: "first-object,target-object,last-object",
 		},
 	},{
 		"not replicated name (namespace)",
@@ -828,7 +828,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "target-object",
+			ReplicationTargetsAnnotation: "target-object",
 		},
 	},{
 		"not replicated name (name)",
@@ -837,7 +837,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"source-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "other-object",
+			ReplicationTargetsAnnotation: "other-object",
 		},
 	},{
 		"replicated namespace",
@@ -846,7 +846,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"source-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "target-namespace",
+			TargetNamespacesAnnotation: "target-namespace",
 		},
 	},{
 		"replicated namespace list",
@@ -855,7 +855,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"source-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "first-namespace,target-namespace,last-namespace",
+			TargetNamespacesAnnotation: "first-namespace,target-namespace,last-namespace",
 		},
 	},{
 		"not replicated namespace (namespace)",
@@ -864,7 +864,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"source-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "other-namespace",
+			TargetNamespacesAnnotation: "other-namespace",
 		},
 	},{
 		"not replicated namespace (name)",
@@ -873,7 +873,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "target-namespace",
+			TargetNamespacesAnnotation: "target-namespace",
 		},
 	},{
 		"replicated namespace pattern",
@@ -882,7 +882,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"source-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "target-.*",
+			TargetNamespacesAnnotation: "target-.*",
 		},
 	},{
 		"replicated namespace pattern list",
@@ -891,7 +891,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"source-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "first-.*,target-.*,last-.*",
+			TargetNamespacesAnnotation: "first-.*,target-.*,last-.*",
 		},
 	},{
 		"not replicated namespace pattern (namespace)",
@@ -900,7 +900,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"source-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "other-.*",
+			TargetNamespacesAnnotation: "other-.*",
 		},
 	},{
 		"not replicated namespace pattern (name)",
@@ -909,7 +909,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "target-.*",
+			TargetNamespacesAnnotation: "target-.*",
 		},
 	},{
 		"illformed target",
@@ -918,7 +918,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"target-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToAnnotation: "target-namespace/target-object,target illformed",
+			ReplicationTargetsAnnotation: "target-namespace/target-object,target illformed",
 		},
 	},{
 		"illformed pattern",
@@ -927,7 +927,7 @@ func Test_isReplicatedTo(t *testing.T) {
 		"source-object",
 		"target-namespace",
 		map[string]string{
-			ReplicateToNamespacesAnnotation: "target-namespace,[target",
+			TargetNamespacesAnnotation: "target-namespace,[target",
 		},
 	}}
 	rep := &replicatorProps {
@@ -1118,10 +1118,10 @@ func Test_getReplicationTargets(t *testing.T) {
 			Annotations: map[string]string{},
 		}
 		if example.to != "" {
-			source.Annotations[ReplicateToAnnotation] = example.to
+			source.Annotations[ReplicationTargetsAnnotation] = example.to
 		}
 		if example.toNamespaces != "" {
-			source.Annotations[ReplicateToNamespacesAnnotation] = example.toNamespaces
+			source.Annotations[TargetNamespacesAnnotation] = example.toNamespaces
 		}
 		targets, patterns, err := rep.getReplicationTargets(source)
 		if example.err {

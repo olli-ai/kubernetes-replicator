@@ -77,7 +77,7 @@ func TestSecrets_update_clear(t *testing.T) {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
 			Annotations: map[string]string {
-				ReplicationAllowed: "true",
+				ReplicationAllowedAnnotation: "true",
 			},
 		},
 		Data:       map[string][]byte {
@@ -92,7 +92,7 @@ func TestSecrets_update_clear(t *testing.T) {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
 			Annotations: map[string]string {
-				ReplicateFromAnnotation: "source-namespace/source-name",
+				ReplicationSourceAnnotation: "source-namespace/source-name",
 			},
 		},
 		Data:       map[string][]byte {
@@ -174,7 +174,7 @@ func TestSecrets_update_clear_version(t *testing.T) {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
 			Annotations: map[string]string {
-				ReplicationAllowed: "true",
+				ReplicationAllowedAnnotation: "true",
 			},
 			ResourceVersion: "test10",
 		},
@@ -191,7 +191,7 @@ func TestSecrets_update_clear_version(t *testing.T) {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
 			Annotations: map[string]string {
-				ReplicateFromAnnotation: "source-namespace/source-name",
+				ReplicationSourceAnnotation: "source-namespace/source-name",
 			},
 			ResourceVersion: "test20",
 		},
@@ -214,9 +214,9 @@ func TestSecrets_update_clear_version(t *testing.T) {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
 			Annotations: map[string]string {
-				ReplicateFromAnnotation: "source-namespace/source-name",
-				ReplicatedFromVersionAnnotation: "test40",
-				ReplicatedAtAnnotation: "2000-01-01T00:00:00Z",
+				ReplicationSourceAnnotation: "source-namespace/source-name",
+				ReplicatedVersionAnnotation: "test40",
+				ReplicationTimeAnnotation: "2000-01-01T00:00:00Z",
 			},
 			ResourceVersion: "test30",
 		},
@@ -268,11 +268,16 @@ func TestSecrets_install_delete(t *testing.T) {
 	require.NoError(t, err)
 
 	source, err := client.CoreV1().Secrets("source-namespace").Create(&v1.Secret {
+		Type:       "source-type",
+		TypeMeta:   metav1.TypeMeta {
+			Kind:       "source-kind",
+			APIVersion: "source-version",
+		},
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
 			Annotations: map[string]string {
-				ReplicateToAnnotation: "target-namespace/target-name",
+				ReplicationTargetsAnnotation: "target-namespace/target-name",
 			},
 		},
 		Data:       map[string][]byte {
@@ -286,10 +291,17 @@ func TestSecrets_install_delete(t *testing.T) {
 	target, err := client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
+		assert.Equal(t, source.Type, target.Type)
+		assert.Equal(t, source.TypeMeta, target.TypeMeta)
 		assert.Equal(t, source.Data, target.Data)
 	}
 
 	source = source.DeepCopy()
+	source.Type = "other-type"
+	source.TypeMeta = metav1.TypeMeta {
+		Kind:       "other-kind",
+		APIVersion: "other-version",
+	}
 	source.Data = map[string][]byte {
 		"other-data": []byte("true"),
 		"data-field": []byte("other-data"),
@@ -301,6 +313,8 @@ func TestSecrets_install_delete(t *testing.T) {
 	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
+		assert.Equal(t, source.Type, target.Type)
+		assert.Equal(t, source.TypeMeta, target.TypeMeta)
 		assert.Equal(t, source.Data, target.Data)
 	}
 
@@ -357,7 +371,7 @@ func TestSecrets_install_delete_version(t *testing.T) {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
 			Annotations: map[string]string {
-				ReplicateToAnnotation: "target-namespace/target-name",
+				ReplicationTargetsAnnotation: "target-namespace/target-name",
 			},
 			ResourceVersion: "test10",
 		},
@@ -380,9 +394,9 @@ func TestSecrets_install_delete_version(t *testing.T) {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
 			Annotations: map[string]string {
-				ReplicatedByAnnotation: "source-namespace/source-name",
-				ReplicatedFromVersionAnnotation: "test30",
-				ReplicatedAtAnnotation: "2000-01-01T00:00:00Z",
+				CreatedByAnnotation: "source-namespace/source-name",
+				ReplicatedVersionAnnotation: "test30",
+				ReplicationTimeAnnotation: "2000-01-01T00:00:00Z",
 			},
 			ResourceVersion: "test20",
 		},

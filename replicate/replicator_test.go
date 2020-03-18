@@ -56,13 +56,13 @@ func TestFromAnnotation(t *testing.T) {
 		name:       "allow",
 		replicated: true,
 		annotations: map[string]string {
-			ReplicationAllowed: "true",
+			ReplicationAllowedAnnotation: "true",
 		},
 	}, {
 		name:       "allow same namespace",
 		replicated: true,
 		annotations: map[string]string {
-			ReplicationAllowed: "true",
+			ReplicationAllowedAnnotation: "true",
 		},
 		namespace:  "source-namespace",
 		from:       "source-name",
@@ -70,77 +70,77 @@ func TestFromAnnotation(t *testing.T) {
 		name:       "disallow",
 		replicated: false,
 		annotations: map[string]string {
-			ReplicationAllowed: "false",
+			ReplicationAllowedAnnotation: "false",
 		},
 	}, {
 		name:       "allow all but disallow",
 		replicated: false,
 		allowAll:   true,
 		annotations: map[string]string {
-			ReplicationAllowed: "false",
+			ReplicationAllowedAnnotation: "false",
 		},
 	}, {
 		name:       "allow wrong format",
 		replicated: false,
 		annotations: map[string]string {
-			ReplicationAllowed: "other",
+			ReplicationAllowedAnnotation: "other",
 		},
 	}, {
 		name:       "allow all but allow wrong format",
 		replicated: false,
 		allowAll:   true,
 		annotations: map[string]string {
-			ReplicationAllowed: "other",
+			ReplicationAllowedAnnotation: "other",
 		},
 	}, {
 		name:       "allow namespace",
 		replicated: true,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "target-namespace",
+			AllowedNamespacesAnnotation: "target-namespace",
 		},
 	}, {
 		name:       "allow other namespace",
 		replicated: false,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "other-namespace",
+			AllowedNamespacesAnnotation: "other-namespace",
 		},
 	}, {
 		name:       "allow all but allow other namespace",
 		replicated: false,
 		allowAll:   true,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "other-namespace",
+			AllowedNamespacesAnnotation: "other-namespace",
 		},
 	}, {
 		name:       "allow namespace list",
 		replicated: true,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "first-namespace,target-namespace,last-namespace",
+			AllowedNamespacesAnnotation: "first-namespace,target-namespace,last-namespace",
 		},
 	}, {
 		name:       "allow namespace pattern",
 		replicated: true,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "target-.*",
+			AllowedNamespacesAnnotation: "target-.*",
 		},
 	}, {
 		name:       "allow other pattern",
 		replicated: false,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "other-.*",
+			AllowedNamespacesAnnotation: "other-.*",
 		},
 	}, {
 		name:       "allow all but allow other pattern",
 		replicated: false,
 		allowAll:   true,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "other-.*",
+			AllowedNamespacesAnnotation: "other-.*",
 		},
 	}, {
 		name:       "allow namespace pattern list",
 		replicated: true,
 		annotations: map[string]string {
-			ReplicationAllowedNamespaces: "first-.*,target-.*,last-.*",
+			AllowedNamespacesAnnotation: "first-.*,target-.*,last-.*",
 		},
 	}}
 	for _, example := range examples {
@@ -167,7 +167,7 @@ func TestFromAnnotation(t *testing.T) {
 				"target-name",
 				"target-data",
 				map[string]string {
-					ReplicateFromAnnotation: example.from,
+					ReplicationSourceAnnotation: example.from,
 				},
 			))
 			return assert.NoError(t, err, example.name)
@@ -184,8 +184,8 @@ func TestFromAnnotation(t *testing.T) {
 				return false
 			}
 			// target has the right data and annotations
-			atV, atOk := target.Annotations[ReplicatedAtAnnotation]
-			vV, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
+			atV, atOk := target.Annotations[ReplicationTimeAnnotation]
+			vV, vOk := target.Annotations[ReplicatedVersionAnnotation]
 			if example.replicated {
 				assert.Equal(t, "source-data", target.Data, example.name)
 				if assert.True(t, atOk, example.name) {
@@ -224,8 +224,8 @@ func TestFromAnnotation(t *testing.T) {
 				return false
 			}
 			// the target has lost its data and its annotations
-			atV, atOk := target.Annotations[ReplicatedAtAnnotation]
-			_, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
+			atV, atOk := target.Annotations[ReplicationTimeAnnotation]
+			_, vOk := target.Annotations[ReplicatedVersionAnnotation]
 			if example.replicated {
 				assert.Equal(t, "", target.Data, example.name)
 				if assert.True(t, atOk, example.name) {
@@ -290,75 +290,75 @@ func TestToAnnotation(t *testing.T) {
 	},{
 		testName:    "no namespace (to annotation)",
 		annotations: map[string]string {
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 	},{
 		testName:    "no namespace (to namespace annotation)",
 		annotations: map[string]string {
-			ReplicateToNamespacesAnnotation: "target-namespace",
+			TargetNamespacesAnnotation: "target-namespace",
 		},
 	},{
 		testName:    "same namespace",
 		name:        "target-name",
 		annotations: map[string]string {
-			ReplicateToAnnotation: "target-name",
+			ReplicationTargetsAnnotation: "target-name",
 		},
 	},{
 		testName:    "same name",
 		name:        "source-name",
 		annotations: map[string]string {
-			ReplicateToNamespacesAnnotation: "target-namespace",
+			TargetNamespacesAnnotation: "target-namespace",
 		},
 		namespace:   "target-namespace",
 	},{
 		testName:    "to annotation",
 		name:        "target-name",
 		annotations: map[string]string {
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 		namespace:   "target-namespace",
 	},{
 		testName:    "both annotations",
 		name:        "target-name",
 		annotations: map[string]string {
-			ReplicateToAnnotation: "target-name",
-			ReplicateToNamespacesAnnotation: "target-namespace",
+			ReplicationTargetsAnnotation: "target-name",
+			TargetNamespacesAnnotation: "target-namespace",
 		},
 		namespace:   "target-namespace",
 	},{
 		testName:    "pattern to annotations",
 		name:        "target-name",
 		annotations: map[string]string {
-			ReplicateToAnnotation: "target-.*/target-name",
+			ReplicationTargetsAnnotation: "target-.*/target-name",
 		},
 		namespace:   "target-namespace",
 	},{
 		testName:    "pattern to namespace annotations",
 		name:        "source-name",
 		annotations: map[string]string {
-			ReplicateToNamespacesAnnotation: "target-.*",
+			TargetNamespacesAnnotation: "target-.*",
 		},
 		namespace:   "target-namespace",
 	},{
 		testName:    "pattern both annotations",
 		name:        "target-name",
 		annotations: map[string]string {
-			ReplicateToAnnotation: "target-name",
-			ReplicateToNamespacesAnnotation: "target-.*",
+			ReplicationTargetsAnnotation: "target-name",
+			TargetNamespacesAnnotation: "target-.*",
 		},
 		namespace:   "target-namespace",
 	},{
 		testName:    "list to annotation",
 		name:        "target-name",
 		annotations: map[string]string {
-			ReplicateToAnnotation: "first-namespace/first-name,target-namespace/target-name,last-namespace/last-name",
+			ReplicationTargetsAnnotation: "first-namespace/first-name,target-namespace/target-name,last-namespace/last-name",
 		},
 		namespace:   "target-namespace",
 	},{
 		testName:    "list to namespace annotation",
 		name:        "source-name",
 		annotations: map[string]string {
-			ReplicateToNamespacesAnnotation: "first-namespace,target-namespace,last-namespace",
+			TargetNamespacesAnnotation: "first-namespace,target-namespace,last-namespace",
 		},
 		namespace:   "target-namespace",
 	}}
@@ -404,9 +404,9 @@ func TestToAnnotation(t *testing.T) {
 				}
 				expected[target.Key()] = true
 				// test that target has the right data and annotations
-				atV, atOk := target.Annotations[ReplicatedAtAnnotation]
-				byV, byOk := target.Annotations[ReplicatedByAnnotation]
-				vV, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
+				atV, atOk := target.Annotations[ReplicationTimeAnnotation]
+				byV, byOk := target.Annotations[CreatedByAnnotation]
+				vV, vOk := target.Annotations[ReplicatedVersionAnnotation]
 				assert.Equal(t, "source-data", target.Data, example.testName)
 				if assert.True(t, atOk, example.testName) {
 					IsTimestamp(t, atV, example.testName)
@@ -425,9 +425,9 @@ func TestToAnnotation(t *testing.T) {
 				if !assert.NoError(t, err, example.testName) || !assert.NotNil(t, target, example.testName) {
 					return false
 				}
-				atV, atOk = target.Annotations[ReplicatedAtAnnotation]
-				byV, byOk = target.Annotations[ReplicatedByAnnotation]
-				vV, vOk = target.Annotations[ReplicatedFromVersionAnnotation]
+				atV, atOk = target.Annotations[ReplicationTimeAnnotation]
+				byV, byOk = target.Annotations[CreatedByAnnotation]
+				vV, vOk = target.Annotations[ReplicatedVersionAnnotation]
 				assert.Equal(t, "source-data", target.Data, example.testName)
 				if assert.True(t, atOk, example.testName) {
 					IsTimestamp(t, atV, example.testName)
@@ -546,8 +546,8 @@ func TestFromToAnnotation(t *testing.T) {
 		name:            "from annotation, no allowed",
 		replicated:      false,
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-namespace/source-name",
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 		targetName:      "target-name",
 	},{
@@ -555,41 +555,41 @@ func TestFromToAnnotation(t *testing.T) {
 		replicated:      true,
 		allowAll:        true,
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-namespace/source-name",
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 		targetName:      "target-name",
 	},{
 		name:            "from annotation, allowed",
 		replicated:      true,
 		source:          map[string]string{
-			ReplicationAllowed: "true",
+			ReplicationAllowedAnnotation: "true",
 		},
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-namespace/source-name",
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 		targetName:      "target-name",
 	},{
 		name:            "from annotation, allowed namespace",
 		replicated:      true,
 		source:          map[string]string{
-			ReplicationAllowedNamespaces: "target-namespace",
+			AllowedNamespacesAnnotation: "target-namespace",
 		},
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-namespace/source-name",
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 		targetName:      "target-name",
 	},{
 		name:            "from annotation, allowed middle",
 		replicated:      false,
 		source:          map[string]string{
-			ReplicationAllowedNamespaces: "niddle-namespace",
+			AllowedNamespacesAnnotation: "niddle-namespace",
 		},
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-namespace/source-name",
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 		targetName:      "target-name",
 	},{
@@ -598,8 +598,8 @@ func TestFromToAnnotation(t *testing.T) {
 		allowAll:        true,
 		middleNamespace: "source-namespace",
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-name",
-			ReplicateToAnnotation: "target-namespace/target-name",
+			ReplicationSourceAnnotation: "source-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
 		},
 		targetName:      "target-name",
 	},{
@@ -607,8 +607,8 @@ func TestFromToAnnotation(t *testing.T) {
 		replicated:      true,
 		allowAll:        true,
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-namespace/source-name",
-			ReplicateToAnnotation: "target-name",
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			ReplicationTargetsAnnotation: "target-name",
 		},
 		targetName:      "target-name",
 		targetNamespace: "middle-namespace",
@@ -617,8 +617,8 @@ func TestFromToAnnotation(t *testing.T) {
 		replicated:      true,
 		allowAll:        true,
 		middle:          map[string]string{
-			ReplicateFromAnnotation: "source-namespace/source-name",
-			ReplicateToNamespacesAnnotation: "target-namespace",
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			TargetNamespacesAnnotation: "target-namespace",
 		},
 		targetName:      "middle-name",
 		targetNamespace: "target-namespace",
@@ -707,10 +707,10 @@ func TestFromToAnnotation(t *testing.T) {
 				return false
 			}
 			// check the annotations
-			fromV, fromOk := target.Annotations[ReplicateFromAnnotation]
-			byV, byOk := target.Annotations[ReplicatedByAnnotation]
-			atV, atOk := target.Annotations[ReplicatedAtAnnotation]
-			vV, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
+			fromV, fromOk := target.Annotations[ReplicationSourceAnnotation]
+			byV, byOk := target.Annotations[CreatedByAnnotation]
+			atV, atOk := target.Annotations[ReplicationTimeAnnotation]
+			vV, vOk := target.Annotations[ReplicatedVersionAnnotation]
 			if assert.True(t, fromOk, example.name) {
 				assert.Equal(t, "source-namespace/source-name", fromV, example.name)
 			}
@@ -768,10 +768,10 @@ func TestFromToAnnotation(t *testing.T) {
 			if target, err = repl.GetFake(example.targetNamespace, example.targetName); !assert.NoError(t, err, example.name) || !assert.NotNil(t, target, example.name) {
 				return false
 			}
-			fromV, fromOk := target.Annotations[ReplicateFromAnnotation]
-			byV, byOk := target.Annotations[ReplicatedByAnnotation]
-			atV, atOk := target.Annotations[ReplicatedAtAnnotation]
-			_, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
+			fromV, fromOk := target.Annotations[ReplicationSourceAnnotation]
+			byV, byOk := target.Annotations[CreatedByAnnotation]
+			atV, atOk := target.Annotations[ReplicationTimeAnnotation]
+			_, vOk := target.Annotations[ReplicatedVersionAnnotation]
 			assert.Equal(t, "", target.Data, example.name)
 			if assert.True(t, fromOk, example.name) {
 				assert.Equal(t, "source-namespace/source-name", fromV, example.name)
@@ -940,8 +940,8 @@ func TestToAnnotation_ManyTargets(t *testing.T) {
 	var err error
 	source := NewFake("source-namespace", "source-name", "before-data",
 		map[string]string {
-			ReplicateToAnnotation: "pattern-.*/pattern-name,target-name1,target-name2,other-namespace/other-name",
-			ReplicateToNamespacesAnnotation: "target-namespace,namespace-[0-9]+",
+			ReplicationTargetsAnnotation: "pattern-.*/pattern-name,target-name1,target-name2,other-namespace/other-name",
+			TargetNamespacesAnnotation: "target-namespace,namespace-[0-9]+",
 		})
 	calls := 0
 	for _, ns := range beforeNs {
@@ -968,9 +968,9 @@ func TestToAnnotation_ManyTargets(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, source.Data, fake.Data, key)
-		atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
-		byV, byOk := fake.Annotations[ReplicatedByAnnotation]
-		vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+		atV, atOk := fake.Annotations[ReplicationTimeAnnotation]
+		byV, byOk := fake.Annotations[CreatedByAnnotation]
+		vV, vOk := fake.Annotations[ReplicatedVersionAnnotation]
 		if assert.True(t, atOk, key) {
 			IsTimestamp(t, atV, key)
 		}
@@ -1007,9 +1007,9 @@ func TestToAnnotation_ManyTargets(t *testing.T) {
 			continue
 		}
 		assert.Equal(t, source.Data, fake.Data, key)
-		atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
-		byV, byOk := fake.Annotations[ReplicatedByAnnotation]
-		vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+		atV, atOk := fake.Annotations[ReplicationTimeAnnotation]
+		byV, byOk := fake.Annotations[CreatedByAnnotation]
+		vV, vOk := fake.Annotations[ReplicatedVersionAnnotation]
 		if assert.True(t, atOk, key) {
 			IsTimestamp(t, atV, key)
 		}
@@ -1042,9 +1042,9 @@ func TestToAnnotation_AnnotaionsUpdate(t *testing.T) {
 				continue
 			}
 			assert.Equal(t, source.Data, fake.Data, key)
-			atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
-			byV, byOk := fake.Annotations[ReplicatedByAnnotation]
-			vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+			atV, atOk := fake.Annotations[ReplicationTimeAnnotation]
+			byV, byOk := fake.Annotations[CreatedByAnnotation]
+			vV, vOk := fake.Annotations[ReplicatedVersionAnnotation]
 			if assert.True(t, atOk, key) {
 				IsTimestamp(t, atV, key)
 			}
@@ -1060,8 +1060,8 @@ func TestToAnnotation_AnnotaionsUpdate(t *testing.T) {
 
 	source := NewFake("source-namespace", "source-name", "data1",
 		map[string]string {
-			ReplicateToAnnotation: "target-name",
-			ReplicateToNamespacesAnnotation: "ns2,ns3,ns5",
+			ReplicationTargetsAnnotation: "target-name",
+			TargetNamespacesAnnotation: "ns2,ns3,ns5",
 		})
 	err = repl.SetAddFake(source)
 	require.NoError(t, err)
@@ -1077,8 +1077,8 @@ func TestToAnnotation_AnnotaionsUpdate(t *testing.T) {
 	assert.Equal(t, expected, found)
 
 	source, err = repl.UpdateAddFake(source, "data2", map[string]string {
-		ReplicateToAnnotation: "target-name,ns5/other-name",
-		ReplicateToNamespacesAnnotation: "ns2,ns4",
+		ReplicationTargetsAnnotation: "target-name,ns5/other-name",
+		TargetNamespacesAnnotation: "ns2,ns4",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, calls+5, repl.Calls())
@@ -1092,8 +1092,8 @@ func TestToAnnotation_AnnotaionsUpdate(t *testing.T) {
 	assert.Equal(t, expected, found)
 
 	source, err = repl.UpdateAddFake(source, "data3", map[string]string {
-		ReplicateToAnnotation: "target-name",
-		ReplicateToNamespacesAnnotation: "ns[1-4]",
+		ReplicationTargetsAnnotation: "target-name",
+		TargetNamespacesAnnotation: "ns[1-4]",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, calls+5, repl.Calls())
@@ -1113,8 +1113,8 @@ func TestToAnnotation_TargetExists(t *testing.T) {
 	repl := NewFakeReplicator(false)
 	source := NewFake("source-namespace", "source-name", "source-data",
 		map[string]string {
-			ReplicateToAnnotation: "target-name",
-			ReplicateToNamespacesAnnotation: "ns.*",
+			ReplicationTargetsAnnotation: "target-name",
+			TargetNamespacesAnnotation: "ns.*",
 		})
 
 	test := func (source *FakeObject, expected map[string]bool) {
@@ -1141,9 +1141,9 @@ func TestToAnnotation_TargetExists(t *testing.T) {
 				continue
 			}
 			assert.Equal(t, source.Data, fake.Data, key)
-			atV, atOk := fake.Annotations[ReplicatedAtAnnotation]
-			byV, byOk := fake.Annotations[ReplicatedByAnnotation]
-			vV, vOk := fake.Annotations[ReplicatedFromVersionAnnotation]
+			atV, atOk := fake.Annotations[ReplicationTimeAnnotation]
+			byV, byOk := fake.Annotations[CreatedByAnnotation]
+			vV, vOk := fake.Annotations[ReplicatedVersionAnnotation]
 			if assert.True(t, atOk, key) {
 				IsTimestamp(t, atV, key)
 			}
@@ -1253,8 +1253,8 @@ func TestFromAnnotation_Updates(t *testing.T) {
 		if !assert.NoError(t, err) || !assert.NotNil(t, target) {
 			return
 		}
-		atV, atOk := target.Annotations[ReplicatedAtAnnotation]
-		vV, vOk := target.Annotations[ReplicatedFromVersionAnnotation]
+		atV, atOk := target.Annotations[ReplicationTimeAnnotation]
+		vV, vOk := target.Annotations[ReplicatedVersionAnnotation]
 		if assert.True(t, atOk) {
 			IsTimestamp(t, atV)
 		}
@@ -1272,7 +1272,7 @@ func TestFromAnnotation_Updates(t *testing.T) {
 
 	target := NewFake("target-namespace", "target-name", "target-data",
 		map[string]string {
-			ReplicateFromAnnotation: "source-namespace/source1",
+			ReplicationSourceAnnotation: "source-namespace/source1",
 		})
 	require.NoError(t, repl.SetAddFake(target))
 	assert.Equal(t, calls, repl.Calls())
@@ -1284,7 +1284,7 @@ func TestFromAnnotation_Updates(t *testing.T) {
 	calls = repl.Calls()
 
 	source1, err := repl.UpdateAddFake(source1, "data1", map[string]string {
-		ReplicationAllowed: "true",
+		ReplicationAllowedAnnotation: "true",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, calls + 1, repl.Calls())
@@ -1293,14 +1293,14 @@ func TestFromAnnotation_Updates(t *testing.T) {
 
 	source2 := NewFake("source-namespace", "source2", "data2",
 		map[string]string {
-			ReplicationAllowed: "true",
+			ReplicationAllowedAnnotation: "true",
 		})
 	require.NoError(t, repl.SetAddFake(source2))
 	target, err = repl.GetFake("target-namespace", "target-name")
 	require.NoError(t, err)
 	require.NotNil(t, target)
 	_, err = repl.UpdateAddFake(target, "", map[string]string {
-		ReplicateFromAnnotation: "source-namespace/source2",
+		ReplicationSourceAnnotation: "source-namespace/source2",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, calls + 1, repl.Calls())
@@ -1314,7 +1314,7 @@ func TestFromAnnotation_Updates(t *testing.T) {
 	test(source2)
 
 	source2, err = repl.UpdateAddFake(source2, "data2", map[string]string {
-		ReplicationAllowed: "false",
+		ReplicationAllowedAnnotation: "false",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, calls + 1, repl.Calls())
@@ -1325,7 +1325,7 @@ func TestFromAnnotation_Updates(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, target)
 	_, err = repl.UpdateAddFake(target, "", map[string]string {
-		ReplicateFromAnnotation: "source-namespace/source1",
+		ReplicationSourceAnnotation: "source-namespace/source1",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, calls + 1, repl.Calls())
