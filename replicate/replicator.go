@@ -166,7 +166,7 @@ func (r *objectReplicator) Init(resyncPeriod time.Duration, objectsInterface int
 // Checks if any object wants to replicte itself into it
 func (r *objectReplicator) NamespaceAdded(object interface{}) {
 	namespace := object.(*v1.Namespace)
-	log.Printf("new namespace %s", namespace.Name)
+	log.Printf("namespace added %s", namespace.Name)
 	// find all the objects which want to replicate to that namespace
 	todo := map[string]bool{}
 	for source, watched := range r.watchedTargets {
@@ -270,6 +270,7 @@ func (r *objectReplicator) replicateToNamespace(object interface{}, namespace st
 func (r *objectReplicator) ObjectAdded(object interface{}) {
 	meta := r.getMeta(object)
 	key := fmt.Sprintf("%s/%s", meta.Namespace, meta.Name)
+	// log.Printf("%s added %s", r.Name, key)
 	// get replication targets
 	targets, targetPatterns, err := r.getReplicationTargets(meta)
 	if err != nil {
@@ -702,6 +703,7 @@ func (r *objectReplicator) objectFromStore(key string) (interface{}, *metav1.Obj
 func (r *objectReplicator) ObjectDeleted(object interface{}) {
 	meta := r.getMeta(object)
 	key := fmt.Sprintf("%s/%s", meta.Namespace, meta.Name)
+	// log.Printf("%s deleted %s", r.Name, key)
 	// delete targets of replicate-to annotations
 	if targets, ok := r.targetsTo[key]; ok {
 		for _, t := range targets {

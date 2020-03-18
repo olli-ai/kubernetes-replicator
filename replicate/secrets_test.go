@@ -18,23 +18,23 @@ import (
 )
 
 // This is dark magic to manage to do version checking on delete too
-type ConfigMapsFakeClient struct {
+type SecretsFakeClient struct {
 	fake.Clientset
 }
-func (c *ConfigMapsFakeClient) CoreV1() corev1.CoreV1Interface {
-	return &ConfigMapsFakeCoreV1{fakev1.FakeCoreV1{Fake: &c.Fake}}
+func (c *SecretsFakeClient) CoreV1() corev1.CoreV1Interface {
+	return &SecretsFakeCoreV1{fakev1.FakeCoreV1{Fake: &c.Fake}}
 }
-type ConfigMapsFakeCoreV1 struct {
+type SecretsFakeCoreV1 struct {
 	fakev1.FakeCoreV1
 }
-func (c *ConfigMapsFakeCoreV1) ConfigMaps(namespace string) corev1.ConfigMapInterface {
-	return &ConfigMapsFakeConfigMaps{*c.FakeCoreV1.ConfigMaps(namespace).(*fakev1.FakeConfigMaps)}
+func (c *SecretsFakeCoreV1) Secrets(namespace string) corev1.SecretInterface {
+	return &SecretsFakeSecrets{*c.FakeCoreV1.Secrets(namespace).(*fakev1.FakeSecrets)}
 }
-var configmapsResource = schema.GroupResource{Group: "", Resource: "configmaps"}
-type ConfigMapsFakeConfigMaps struct {
-	fakev1.FakeConfigMaps
+var secretsResource = schema.GroupResource{Group: "", Resource: "secrets"}
+type SecretsFakeSecrets struct {
+	fakev1.FakeSecrets
 }
-func (c *ConfigMapsFakeConfigMaps) Delete(name string, options *metav1.DeleteOptions) error {
+func (c *SecretsFakeSecrets) Delete(name string, options *metav1.DeleteOptions) error {
 	if options == nil {
 	} else if pre := options.Preconditions; pre == nil {
 	} else if ver := pre.ResourceVersion; ver == nil {
@@ -42,18 +42,18 @@ func (c *ConfigMapsFakeConfigMaps) Delete(name string, options *metav1.DeleteOpt
 	} else if meta, err := GetMeta(obj); err != nil {
 		return err
 	} else if meta.ResourceVersion != *ver {
-		return errors.NewConflict(configmapsResource, name, fmt.Errorf(
+		return errors.NewConflict(secretsResource, name, fmt.Errorf(
 				"has resource version \"%s\", but resource version \"%s\" provided",
 				meta.ResourceVersion, *ver))
 	}
-	return c.FakeConfigMaps.Delete(name, options)
+	return c.FakeSecrets.Delete(name, options)
 }
 
 // Test that update and clear correctly manages the data
-func TestConfigMaps_update_clear(t *testing.T) {
-	client := &ConfigMapsFakeClient{*fake.NewSimpleClientset()}
+func TestSecrets_update_clear(t *testing.T) {
+	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
 	AddResourceVersionReactor(&client.Clientset)
-	repl := NewConfigMapReplicator(client, time.Hour, false)
+	repl := NewSecretReplicator(client, time.Hour, false)
 	stop := repl.Start()
 	defer stop()
 	time.Sleep(SafeDuration)
@@ -72,7 +72,7 @@ func TestConfigMaps_update_clear(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	source, err := client.CoreV1().ConfigMaps("source-namespace").Create(&v1.ConfigMap {
+	source, err := client.CoreV1().Secrets("source-namespace").Create(&v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
@@ -80,18 +80,14 @@ func TestConfigMaps_update_clear(t *testing.T) {
 				ReplicationAllowed: "true",
 			},
 		},
-		Data:       map[string]string {
-			"source-data": "true",
-			"data-field":  "source-data",
-		},
-		BinaryData: map[string][]byte {
-			"source-binary": []byte("true"),
-			"binary-field":  []byte("source-binary"),
+		Data:       map[string][]byte {
+			"source-data": []byte("true"),
+			"data-field":  []byte("source-data"),
 		},
 	})
 	require.NoError(t, err)
 
-	target, err := client.CoreV1().ConfigMaps("target-namespace").Create(&v1.ConfigMap {
+	target, err := client.CoreV1().Secrets("target-namespace").Create(&v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
@@ -99,61 +95,50 @@ func TestConfigMaps_update_clear(t *testing.T) {
 				ReplicateFromAnnotation: "source-namespace/source-name",
 			},
 		},
-		Data:       map[string]string {
-			"target-data": "true",
-			"data-field":  "target-data",
-		},
-		BinaryData: map[string][]byte {
-			"target-binary": []byte("true"),
-			"binary-field":  []byte("target-binary"),
+		Data:       map[string][]byte {
+			"target-data": []byte("true"),
+			"data-field":  []byte("target-data"),
 		},
 	})
 	require.NoError(t, err)
 
 	time.Sleep(SafeDuration)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, source.Data, target.Data)
-		assert.Equal(t, source.BinaryData, target.BinaryData)
 	}
 
 	source = source.DeepCopy()
-	source.Data = map[string]string {
-		"other-data": "true",
-		"data-field": "other-data",
+	source.Data = map[string][]byte {
+		"other-data": []byte("true"),
+		"data-field": []byte("other-data"),
 	}
-	source.BinaryData = map[string][]byte {
-		"other-binary": []byte("true"),
-		"binary-field": []byte("other-binary"),
-	}
-	source, err = client.CoreV1().ConfigMaps("source-namespace").Update(source)
+	source, err = client.CoreV1().Secrets("source-namespace").Update(source)
 
 	time.Sleep(SafeDuration)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, source.Data, target.Data)
-		assert.Equal(t, source.BinaryData, target.BinaryData)
 	}
 
-	err = client.CoreV1().ConfigMaps("source-namespace").Delete("source-name", &metav1.DeleteOptions{})
+	err = client.CoreV1().Secrets("source-namespace").Delete("source-name", &metav1.DeleteOptions{})
 	require.NoError(t, err)
 
 	time.Sleep(SafeDuration)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Empty(t, target.Data)
-		assert.Empty(t, target.BinaryData)
 	}
 }
 
 // Test that versionning works with update and clear
-func TestConfigMaps_update_clear_version(t *testing.T) {
-	client := &ConfigMapsFakeClient{*fake.NewSimpleClientset()}
+func TestSecrets_update_clear_version(t *testing.T) {
+	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
 	AddResourceVersionReactor(&client.Clientset)
-	repl := NewConfigMapReplicator(client, time.Hour, false).(*objectReplicator)
+	repl := NewSecretReplicator(client, time.Hour, false).(*objectReplicator)
 
 	namespace := client.CoreV1().Namespaces()
 	ns, err := namespace.Create(&v1.Namespace {
@@ -172,23 +157,19 @@ func TestConfigMaps_update_clear_version(t *testing.T) {
 	repl.namespaceStore.Update(ns)
 
 	// the replicator won't know about this placeholder, ensure that it cannot replace it
-	placeholder, err := client.CoreV1().ConfigMaps("target-namespace").Create(&v1.ConfigMap {
+	placeholder, err := client.CoreV1().Secrets("target-namespace").Create(&v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
 		},
-		Data:       map[string]string {
-			"placeholder-data": "true",
-			"data-field":       "placeholder-data",
-		},
-		BinaryData: map[string][]byte {
-			"placeholder-binary": []byte("true"),
-			"binary-field":       []byte("placeholder-binary"),
+		Data:       map[string][]byte {
+			"placeholder-data": []byte("true"),
+			"data-field":       []byte("placeholder-data"),
 		},
 	})
 	require.NoError(t, err)
 
-	source := &v1.ConfigMap {
+	source := &v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
@@ -197,19 +178,15 @@ func TestConfigMaps_update_clear_version(t *testing.T) {
 			},
 			ResourceVersion: "test10",
 		},
-		Data:       map[string]string {
-			"source-data": "true",
-			"data-field":  "source-data",
-		},
-		BinaryData: map[string][]byte {
-			"source-binary": []byte("true"),
-			"binary-field":  []byte("source-binary"),
+		Data:       map[string][]byte {
+			"source-data": []byte("true"),
+			"data-field":  []byte("source-data"),
 		},
 	}
 	repl.objectStore.Update(source)
 	repl.ObjectAdded(source)
 
-	target := &v1.ConfigMap {
+	target := &v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
@@ -218,26 +195,21 @@ func TestConfigMaps_update_clear_version(t *testing.T) {
 			},
 			ResourceVersion: "test20",
 		},
-		Data:       map[string]string {
-			"target-data": "true",
-			"data-field":  "target-data",
-		},
-		BinaryData: map[string][]byte {
-			"target-binary": []byte("true"),
-			"binary-field":  []byte("target-binary"),
+		Data:       map[string][]byte {
+			"target-data": []byte("true"),
+			"data-field":  []byte("target-data"),
 		},
 	}
 	repl.objectStore.Update(target)
 	repl.ObjectAdded(target)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, placeholder.ResourceVersion, target.ResourceVersion)
 		assert.Equal(t, placeholder.Data, target.Data)
-		assert.Equal(t, placeholder.BinaryData, target.BinaryData)
 	}
 
-	target = &v1.ConfigMap {
+	target = &v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
@@ -248,41 +220,35 @@ func TestConfigMaps_update_clear_version(t *testing.T) {
 			},
 			ResourceVersion: "test30",
 		},
-		Data:       map[string]string {
-			"target-data": "true",
-			"data-field":  "target-data",
-		},
-		BinaryData: map[string][]byte {
-			"target-binary": []byte("true"),
-			"binary-field":  []byte("target-binary"),
+		Data:       map[string][]byte {
+			"target-data": []byte("true"),
+			"data-field":  []byte("target-data"),
 		},
 	}
 	repl.objectStore.Update(target)
 	repl.ObjectAdded(target)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, placeholder.ResourceVersion, target.ResourceVersion)
 		assert.Equal(t, placeholder.Data, target.Data)
-		assert.Equal(t, placeholder.BinaryData, target.BinaryData)
 	}
 
 	repl.objectStore.Delete(source)
 	repl.ObjectDeleted(source)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, placeholder.ResourceVersion, target.ResourceVersion)
 		assert.Equal(t, placeholder.Data, target.Data)
-		assert.Equal(t, placeholder.BinaryData, target.BinaryData)
 	}
 }
 
 // Test that install and delete correctly manages the data
-func TestConfigMaps_install_delete(t *testing.T) {
-	client := &ConfigMapsFakeClient{*fake.NewSimpleClientset()}
+func TestSecrets_install_delete(t *testing.T) {
+	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
 	AddResourceVersionReactor(&client.Clientset)
-	repl := NewConfigMapReplicator(client, time.Hour, false)
+	repl := NewSecretReplicator(client, time.Hour, false)
 	stop := repl.Start()
 	defer stop()
 	time.Sleep(SafeDuration)
@@ -301,7 +267,7 @@ func TestConfigMaps_install_delete(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	source, err := client.CoreV1().ConfigMaps("source-namespace").Create(&v1.ConfigMap {
+	source, err := client.CoreV1().Secrets("source-namespace").Create(&v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
@@ -309,50 +275,40 @@ func TestConfigMaps_install_delete(t *testing.T) {
 				ReplicateToAnnotation: "target-namespace/target-name",
 			},
 		},
-		Data:       map[string]string {
-			"source-data": "true",
-			"data-field":  "source-data",
-		},
-		BinaryData: map[string][]byte {
-			"source-binary": []byte("true"),
-			"binary-field":  []byte("source-binary"),
+		Data:       map[string][]byte {
+			"source-data": []byte("true"),
+			"data-field":  []byte("source-data"),
 		},
 	})
 	require.NoError(t, err)
 
 	time.Sleep(SafeDuration)
-	target, err := client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err := client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, source.Data, target.Data)
-		assert.Equal(t, source.BinaryData, target.BinaryData)
 	}
 
 	source = source.DeepCopy()
-	source.Data = map[string]string {
-		"other-data": "true",
-		"data-field": "other-data",
+	source.Data = map[string][]byte {
+		"other-data": []byte("true"),
+		"data-field": []byte("other-data"),
 	}
-	source.BinaryData = map[string][]byte {
-		"other-binary": []byte("true"),
-		"binary-field": []byte("other-binary"),
-	}
-	source, err = client.CoreV1().ConfigMaps("source-namespace").Update(source)
+	source, err = client.CoreV1().Secrets("source-namespace").Update(source)
 	require.NoError(t, err)
 
 	time.Sleep(SafeDuration)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, source.Data, target.Data)
-		assert.Equal(t, source.BinaryData, target.BinaryData)
 	}
 
-	err = client.CoreV1().ConfigMaps("source-namespace").Delete("source-name", &metav1.DeleteOptions{})
+	err = client.CoreV1().Secrets("source-namespace").Delete("source-name", &metav1.DeleteOptions{})
 	require.NoError(t, err)
 
 	time.Sleep(SafeDuration)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	if assert.Error(t, err) {
 		require.IsType(t, &errors.StatusError{}, err)
 		status := err.(*errors.StatusError)
@@ -362,10 +318,10 @@ func TestConfigMaps_install_delete(t *testing.T) {
 }
 
 // Test that versionning works with install and delete
-func TestConfigMaps_install_delete_version(t *testing.T) {
-	client := &ConfigMapsFakeClient{*fake.NewSimpleClientset()}
+func TestSecrets_install_delete_version(t *testing.T) {
+	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
 	AddResourceVersionReactor(&client.Clientset)
-	repl := NewConfigMapReplicator(client, time.Hour, false).(*objectReplicator)
+	repl := NewSecretReplicator(client, time.Hour, false).(*objectReplicator)
 
 	namespace := client.CoreV1().Namespaces()
 	ns, err := namespace.Create(&v1.Namespace {
@@ -384,23 +340,19 @@ func TestConfigMaps_install_delete_version(t *testing.T) {
 	repl.namespaceStore.Update(ns)
 
 	// the replicator won't know about this placeholder, ensure that it cannot replace it
-	placeholder, err := client.CoreV1().ConfigMaps("target-namespace").Create(&v1.ConfigMap {
+	placeholder, err := client.CoreV1().Secrets("target-namespace").Create(&v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
 		},
-		Data:       map[string]string {
-			"placeholder-data": "true",
-			"data-field":       "placeholder-data",
-		},
-		BinaryData: map[string][]byte {
-			"placeholder-binary": []byte("true"),
-			"binary-field":       []byte("placeholder-binary"),
+		Data:       map[string][]byte {
+			"placeholder-data": []byte("true"),
+			"data-field":       []byte("placeholder-data"),
 		},
 	})
 	require.NoError(t, err)
 
-	source := &v1.ConfigMap {
+	source := &v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "source-name",
 			Namespace:   "source-namespace",
@@ -409,26 +361,21 @@ func TestConfigMaps_install_delete_version(t *testing.T) {
 			},
 			ResourceVersion: "test10",
 		},
-		Data:       map[string]string {
-			"source-data": "true",
-			"data-field":  "source-data",
-		},
-		BinaryData: map[string][]byte {
-			"source-binary": []byte("true"),
-			"binary-field":  []byte("source-binary"),
+		Data:       map[string][]byte {
+			"source-data": []byte("true"),
+			"data-field":  []byte("source-data"),
 		},
 	}
 	repl.objectStore.Update(source)
 	repl.ObjectAdded(source)
-	target, err := client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err := client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, placeholder.ResourceVersion, target.ResourceVersion)
 		assert.Equal(t, placeholder.Data, target.Data)
-		assert.Equal(t, placeholder.BinaryData, target.BinaryData)
 	}
 
-	target = &v1.ConfigMap {
+	target = &v1.Secret {
 		ObjectMeta: metav1.ObjectMeta {
 			Name:        "target-name",
 			Namespace:   "target-namespace",
@@ -439,32 +386,26 @@ func TestConfigMaps_install_delete_version(t *testing.T) {
 			},
 			ResourceVersion: "test20",
 		},
-		Data:       map[string]string {
-			"target-data": "true",
-			"data-field":  "target-data",
-		},
-		BinaryData: map[string][]byte {
-			"target-binary": []byte("true"),
-			"binary-field":  []byte("target-binary"),
+		Data:       map[string][]byte {
+			"target-data": []byte("true"),
+			"data-field":  []byte("target-data"),
 		},
 	}
 	repl.objectStore.Update(target)
 	repl.ObjectAdded(target)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, placeholder.ResourceVersion, target.ResourceVersion)
 		assert.Equal(t, placeholder.Data, target.Data)
-		assert.Equal(t, placeholder.BinaryData, target.BinaryData)
 	}
 
 	repl.objectStore.Delete(source)
 	repl.ObjectDeleted(source)
-	target, err = client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
 	require.NoError(t, err)
 	if assert.NotNil(t, target) {
 		assert.Equal(t, placeholder.ResourceVersion, target.ResourceVersion)
 		assert.Equal(t, placeholder.Data, target.Data)
-		assert.Equal(t, placeholder.BinaryData, target.BinaryData)
 	}
 }

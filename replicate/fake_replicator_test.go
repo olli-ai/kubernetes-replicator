@@ -2,17 +2,23 @@ package replicate
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
+	"time"
 
 	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/testing"
 )
 
-// A verion number, continously incremented
-var fakeVersion int = 1
+// A verion number, continously decremented
+// It is decreasing instead of increasing, to not be tempted to compare them
+var fakeVersion int = 1 << 30
 // A simplified Kubernetes object, for tests
 // It has a version, changed at each update
 type FakeObject struct {
@@ -27,13 +33,13 @@ func NewFake(namespace string, name string, data string, annotations map[string]
 		copy[k] = v
 	}
 	version := fakeVersion
-	fakeVersion ++
+	fakeVersion --
 	return &FakeObject {
 		ObjectMeta: metav1.ObjectMeta {
 			Namespace:       namespace,
 			Name:            name,
 			Annotations:     copy,
-			ResourceVersion: strconv.Itoa(version),
+			ResourceVersion: "fake" + strconv.Itoa(version),
 		},
 		Data:    data,
 		Version: version,
@@ -58,7 +64,7 @@ func (f *FakeObject) Update(data string, annotations map[string]string) *FakeObj
 		Data:       data,
 		Version:    fakeVersion,
 	}
-	fakeVersion ++
+	fakeVersion --
 	if annotations == nil {
 		annotations = f.Annotations
 	}
@@ -67,7 +73,7 @@ func (f *FakeObject) Update(data string, annotations map[string]string) *FakeObj
 		copy[k] = v
 	}
 	fake.Annotations = copy
-	fake.ResourceVersion = strconv.Itoa(fake.Version)
+	fake.ResourceVersion = "fake" + strconv.Itoa(fake.Version)
 	return fake
 }
 // Methods to implement runtime.Object
@@ -166,7 +172,7 @@ func (a *FakeReplicatorActions) install(r *replicatorProps, meta *metav1.ObjectM
 			action = ActionCreate
 		}
 	} else {
-		if version, err := strconv.Atoi(meta.ResourceVersion); err != nil {
+		if version, err := strconv.Atoi(meta.ResourceVersion[len("fake"):]); err != nil {
 			return nil, err
 		} else if v, ok := a.Versions[fake.Key()]; !ok || v != version {
 			return nil, fmt.Errorf("incompatible update for fake object %s: latest version %d, but %d provided", fake.Key(), v, version)
@@ -175,8 +181,8 @@ func (a *FakeReplicatorActions) install(r *replicatorProps, meta *metav1.ObjectM
 		}
 	}
 	fake.Version = fakeVersion
-	fakeVersion ++
-	fake.ResourceVersion = strconv.Itoa(fake.Version)
+	fakeVersion --
+	fake.ResourceVersion = "fake" + strconv.Itoa(fake.Version)
 	if dataObject != nil {
 		fake.Data = dataObject.(*FakeObject).Data
 	}
@@ -397,3 +403,65 @@ func (r *FakeReplicator) UnsetDeleteFake(fake *FakeObject) error {
 	r.ObjectDeleted(fake)
 	return nil
 }
+
+// Returns the ObjectMeta of anything, thanks to reflect dark magic
+func GetMeta(obj interface{}) (*metav1.ObjectMeta, error) {
+	meta, ok := reflect.ValueOf(obj).Elem().FieldByName("ObjectMeta").Addr().Interface().(*metav1.ObjectMeta)
+	if !ok {
+		return nil, fmt.Errorf("expected ObjectMeta, got %T", obj)
+	} else {
+		return meta, nil
+	}
+}
+
+// Add an object reactor to the client, in order to manage resource versions
+func AddResourceVersionReactor(client *fake.Clientset) {
+	client.PrependReactor("*", "*", func(action testing.Action) (bool, runtime.Object, error) {
+		ns := action.GetNamespace()
+		gvr := action.GetResource()
+		// Here and below we need to switch on implementation types,
+		// not on interfaces, as some interfaces are identical
+		// (e.g. UpdateAction and CreateAction), so if we use them,
+		// updates and creates end up matching the same case branch.
+		switch action := action.(type) {
+
+		case testing.CreateActionImpl:
+			objMeta, err := GetMeta(action.GetObject())
+			if err != nil {
+				return true, nil, err
+			}
+			objMeta.ResourceVersion = "fake" + strconv.Itoa(fakeVersion)
+			fakeVersion --
+			return false, nil, nil
+
+		case testing.UpdateActionImpl:
+			objMeta, err := GetMeta(action.GetObject())
+			if err != nil {
+				return true, nil, err
+			}
+			old, err := client.Tracker().Get(gvr, ns, objMeta.GetName())
+			if err != nil {
+				return true, nil, err
+			}
+			oldMeta, err := GetMeta(old)
+			if err != nil {
+				return true, nil, err
+			}
+			if objMeta.ResourceVersion != oldMeta.ResourceVersion {
+				return true, nil, errors.NewConflict(
+					gvr.GroupResource(), objMeta.GetName(), fmt.Errorf(
+						"has resource version \"%s\", but resource version \"%s\" provided",
+						oldMeta.ResourceVersion, objMeta.ResourceVersion))
+			}
+			objMeta.ResourceVersion = "fake" + strconv.Itoa(fakeVersion)
+			fakeVersion --
+			return false, nil, nil
+
+		default:
+			return false, nil, nil
+		}
+	})
+}
+
+// A time that seems long enough to be sure that all event have been read
+var SafeDuration = 5*time.Millisecond
