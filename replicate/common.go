@@ -13,6 +13,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// An invalid annotation name to be sure it will never be sent to kubernetes
+const CheckedAnnotation = "#checked#"
+
 // pattern of a valid kubernetes name
 var validName = regexp.MustCompile(`^[0-9a-z.-]+$`)
 var validPath = regexp.MustCompile(`^[0-9a-z.-]+/[0-9a-z.-]+$`)
@@ -490,34 +493,57 @@ func annotationRefersTo(object *metav1.ObjectMeta, annotation string, reference 
 	}
 }
 
-func checkAnnotations(object *metav1.ObjectMeta) (map[string]string, error) {
-	var invalid, update bool
+// Corrects the annotations of the object
+// Returns an error if the annotations cannot be fixed
+// Returns true if annotations were changed and should be updated in kubernetes
+// Returns false if the annotations are ok
+// Uses the speciall annotation CheckedAnnotation to cache the status
+func updateDeprecatedAnnotations(object *metav1.ObjectMeta) (bool, error) {
+	// look for CheckedAnnotation (cached status)
+	if value, ok := object.Annotations[CheckedAnnotation]; ok {
+		if value == "valid" {
+			return false, nil
+		} else if value == "update" {
+			return true, nil
+		} else {
+			return false, fmt.Errorf("unknown annotations")
+		}
+	}
+	// check all annotations
+	valid := true
+	update := []string{} // the deprecated fields to update
 	prefix := strings.ContainsAny(AnnotationsPrefix, "/")
 	for annotation, _ := range object.Annotations {
+		// a deprectaed annotation
 		if new, ok := DeprecatedAnnotations[annotation]; ok {
 			log.Printf("object %s/%s has deprecated annotation %s, use %s",
 				object.Namespace, object.Name, annotation, new)
-			update = true
+			update = append(update, annotation)
 		} else if !prefix || AllAnnotations[annotation] {
+		// an unknown field with the right prefix
 		} else if strings.HasPrefix(annotation, AnnotationsPrefix) {
-			log.Printf("object %s/%s has invalid annotation %s",
+			log.Printf("object %s/%s has unknown annotation %s",
 				object.Namespace, object.Name, annotation)
-			invalid = true
+			valid = false
 		}
 	}
-	if invalid {
-		return nil, fmt.Errorf("invalid annotations")
-	} else if !update {
-		return nil, nil
+	// invalid, return an error
+	if !valid {
+		object.Annotations[CheckedAnnotation] = "error"
+		return false, fmt.Errorf("unknown annotations")
+	// nothing to do, return false
+	} else if len(update) == 0 {
+		object.Annotations[CheckedAnnotation] = "valid"
+		return false, nil
 	}
-
-	copy := map[string]string{}
-	for annotation, value := range object.Annotations {
-		if new, ok := DeprecatedAnnotations[annotation]; !ok {
-			copy[annotation] = value
-		} else if _, exists := object.Annotations[new]; !exists {
-			copy[new] = value
+	// update all the deprecated annotations
+	object.Annotations[CheckedAnnotation] = "update"
+	for _, old := range update {
+		new := DeprecatedAnnotations[old]
+		if _, ok := object.Annotations[new]; !ok {
+			object.Annotations[new] = object.Annotations[old]
 		}
+		delete(object.Annotations, old)
 	}
-	return copy, nil
+	return true, nil
 }

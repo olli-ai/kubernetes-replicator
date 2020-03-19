@@ -1302,3 +1302,172 @@ func Test_annotationRefersTo(t *testing.T) {
 		}
 	}
 }
+
+func Test_updateDeprecatedAnnotations(t *testing.T) {
+	previous := AnnotationsPrefix
+	deprecated["test-deprecated"] = "test-replacement"
+	defer func() {
+		delete(deprecated, "test-deprecated")
+		PrefixAnnotations(previous)
+	}()
+	examples := []struct{
+		name   string
+		prefix string
+		update bool
+		error  bool
+		before map[string]string
+		after  map[string]string
+	}{{
+		"empty",
+		"empty/",
+		false,
+		false,
+		map[string]string{},
+		map[string]string{},
+	}, {
+		"ok",
+		"ok/",
+		false,
+		false,
+		map[string]string{
+			"ok/replicate-from": "test-from",
+			"ok/replicate-to": "test-to",
+			"other-annotation": "other-value",
+		},
+		map[string]string{
+			"ok/replicate-from": "test-from",
+			"ok/replicate-to": "test-to",
+			"other-annotation": "other-value",
+		},
+	}, {
+		"deprecated",
+		"deprecated/",
+		true,
+		false,
+		map[string]string{
+			"deprecated/replicate-from": "test-from",
+			"deprecated/test-deprecated": "test-value",
+			"other-annotation": "other-value",
+
+		},
+		map[string]string{
+			"deprecated/replicate-from": "test-from",
+			"deprecated/test-replacement": "test-value",
+			"other-annotation": "other-value",
+
+		},
+	}, {
+		"invalid",
+		"invalid/",
+		false,
+		true,
+		map[string]string{
+			"invalid/replicate-from": "test-from",
+			"invalid/test-invalid": "test-value",
+			"other-annotation": "other-value",
+
+		},
+		map[string]string{
+			"invalid/replicate-from": "test-from",
+			"invalid/test-invalid": "test-value",
+			"other-annotation": "other-value",
+
+		},
+	},{
+		"empty no slash",
+		"empty-",
+		false,
+		false,
+		map[string]string{},
+		map[string]string{},
+	}, {
+		"ok no slash",
+		"ok-",
+		false,
+		false,
+		map[string]string{
+			"ok-replicate-from": "test-from",
+			"ok-replicate-to": "test-to",
+			"other-annotation": "other-value",
+		},
+		map[string]string{
+			"ok-replicate-from": "test-from",
+			"ok-replicate-to": "test-to",
+			"other-annotation": "other-value",
+		},
+	}, {
+		"deprecated no slash",
+		"deprecated-",
+		true,
+		false,
+		map[string]string{
+			"deprecated-replicate-from": "test-from",
+			"deprecated-test-deprecated": "test-value",
+			"other-annotation": "other-value",
+
+		},
+		map[string]string{
+			"deprecated-replicate-from": "test-from",
+			"deprecated-test-replacement": "test-value",
+			"other-annotation": "other-value",
+
+		},
+	}, {
+		"invalid no slash",
+		"invalid-",
+		false,
+		false,
+		map[string]string{
+			"invalid-replicate-from": "test-from",
+			"invalid-test-invalid": "test-value",
+			"other-annotation": "other-value",
+
+		},
+		map[string]string{
+			"invalid-replicate-from": "test-from",
+			"invalid-test-invalid": "test-value",
+			"other-annotation": "other-value",
+
+		},
+	}}
+	for _, example := range examples {
+		PrefixAnnotations(example.prefix)
+		meta := &metav1.ObjectMeta {
+			Namespace:   "test-namespace",
+			Name:        "test-name",
+			Annotations: example.before,
+		}
+		update, err := updateDeprecatedAnnotations(meta)
+		if example.error {
+			assert.False(t, example.update, example.name)
+			example.after[CheckedAnnotation] = "error"
+			assert.Error(t, err, example.name)
+			assert.False(t, update, example.name)
+			assert.Equal(t, example.after, meta.Annotations, example.name)
+			update, err = updateDeprecatedAnnotations(meta)
+			assert.Error(t, err, example.name)
+			assert.False(t, update, example.name)
+			assert.Equal(t, example.after, meta.Annotations, example.name)
+		} else if example.update {
+			assert.False(t, example.error, example.name)
+			example.after[CheckedAnnotation] = "update"
+			assert.NoError(t, err, example.name)
+			assert.True(t, update, example.name)
+			assert.Equal(t, example.after, meta.Annotations, example.name)
+			update, err = updateDeprecatedAnnotations(meta)
+			assert.NoError(t, err, example.name)
+			assert.True(t, update, example.name)
+			assert.Equal(t, example.after, meta.Annotations, example.name)
+		} else {
+			assert.False(t, example.error, example.name)
+			example.after[CheckedAnnotation] = "valid"
+			assert.NoError(t, err, example.name)
+			assert.False(t, update, example.name)
+			assert.Equal(t, example.after, meta.Annotations, example.name)
+			update, err = updateDeprecatedAnnotations(meta)
+			assert.NoError(t, err, example.name)
+			assert.False(t, update, example.name)
+			assert.Equal(t, example.after, meta.Annotations, example.name)
+		}
+	}
+}

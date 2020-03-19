@@ -192,14 +192,8 @@ func (r *objectReplicator) NamespaceAdded(object interface{}) {
 	}
 	// get all sources and let them replicate
 	for source := range todo {
-		if sourceObject, exists, err := r.objectStore.GetByKey(source); err != nil {
-			log.Printf("could not get %s %s: %s", r.Name, source, err)
-		// it should not happen, but maybe `ObjectDeleted` hasn't been called yet
-		// just clean watched targets to avoid this to happen again
-		} else if !exists {
-			log.Printf("%s %s not found", r.Name, source)
-			delete(r.watchedTargets, source)
-			delete(r.watchedPatterns, source)
+		if sourceObject, _, err := r.objectFromStore(source, true); err != nil {
+			log.Printf("could not get source %s %s: %s", r.Name, source, err)
 		// let the source replicate
 		} else {
 			log.Printf("%s %s is watching namespace %s", r.Name, source, namespace.Name)
@@ -213,13 +207,20 @@ func (r *objectReplicator) replicateToNamespace(object interface{}, namespace st
 	meta := r.getMeta(object)
 	key := fmt.Sprintf("%s/%s", meta.Namespace, meta.Name)
 	// those annotations have priority
+	// forget about the "replicate-to" annotations
 	if _, ok := meta.Annotations[CreatedByAnnotation]; ok {
+		log.Printf("source %s %s is already created by another %s", r.Name, key, r.Name)
+		delete(r.watchedTargets, key)
+		delete(r.watchedPatterns, key)
 		return
 	}
 	// get all targets
 	targets, targetPatterns, err := r.getReplicationTargets(meta)
+	// annotations got invalid, clear these fields
 	if err != nil {
 		log.Printf("could not parse %s %s: %s", r.Name, key, err)
+		delete(r.watchedTargets, key)
+		delete(r.watchedPatterns, key)
 		return
 	}
 	// find the ones matching with the namespace
@@ -270,19 +271,37 @@ func (r *objectReplicator) replicateToNamespace(object interface{}, namespace st
 func (r *objectReplicator) ObjectAdded(object interface{}) {
 	meta := r.getMeta(object)
 	key := fmt.Sprintf("%s/%s", meta.Namespace, meta.Name)
-	// log.Printf("%s added %s", r.Name, key)
-	if annotations, err := checkAnnotations(meta); err != nil {
-		log.Printf("invalid %s %s: %s", r.Name, key, err)
+	log.Printf("%s added %s", r.Name, key)
+	// clean all those fields, they will be refilled further anyway
+	delete(r.watchedTargets, key)
+	delete(r.watchedPatterns, key)
+	// annotations are invalid, ignore this object
+	if update, err := updateDeprecatedAnnotations(meta); err != nil {
+		log.Printf("could not parse %s %s: %s", r.Name, key, err)
 		return
-	} else if annotations != nil {
-		meta.Annotations = annotations
+	// annotations are deprecated and should be updated
+	} else if update {
 		log.Printf("updating %s %s: updating deprecated annotations", r.Name, key)
+		// copy the annotation without CheckedAnnotation
+		annotations := map[string]string{}
+		for k, v := range meta.Annotations {
+			annotations[k] = v
+		}
+		delete(annotations, CheckedAnnotation)
+		// update it
 		object, err = r.update(&r.replicatorProps, object, object, annotations)
 		if err != nil {
 			log.Printf("error while updating %s %s: %s", r.Name, key, err)
+		// update is successful, save the vew object
 		} else {
 			r.objectStore.Update(object)
 			meta = r.getMeta(object)
+			// that should never happen as kubernetes should send back
+			// the annotations as they were received
+			if _, err := updateDeprecatedAnnotations(meta); err != nil {
+				log.Printf("could not parse %s %s: %s", r.Name, key, err)
+				return
+			}
 		}
 	}
 	// get replication targets
@@ -298,8 +317,7 @@ func (r *objectReplicator) ObjectAdded(object interface{}) {
 
 		sort.Strings(oldTargets)
 		previous := ""
-Targets:
-		for _, target := range oldTargets {
+		Targets: for _, target := range oldTargets {
 			if target == previous {
 				continue Targets
 			}
@@ -321,11 +339,9 @@ Targets:
 			r.deleteObject(target, object,
 				"source has updated \"replicate-to\" annotations")
 		}
+		// will be refilled further
+		delete(r.targetsTo, key)
 	}
-	// clean all those fields, they will be refilled further anyway
-	delete(r.targetsTo, key)
-	delete(r.watchedTargets, key)
-	delete(r.watchedPatterns, key)
 	// check for object having dependencies, and update them
 	if replicas, ok := r.targetsFrom[key]; ok && len(replicas) > 0 {
 		log.Printf("%s %s has %d dependents", r.Name, key, len(replicas))
@@ -334,25 +350,25 @@ Targets:
 		updatedReplicas := []string{}
 		var previous string
 
-		for _, dependentKey := range replicas {
+		for _, dependent := range replicas {
 			// get rid of dupplicates in replicas
-			if previous == dependentKey {
+			if previous == dependent {
 				continue
 			}
-			previous = dependentKey
+			previous = dependent
 			// get the target
-			targetObject, targetMeta, err := r.objectFromStore(dependentKey)
+			targetObject, targetMeta, err := r.objectFromStore(dependent, true)
 			if err != nil {
-				log.Printf("could not load dependent %s: %s", r.Name, err)
+				log.Printf("could not get dependent %s %s: %s", r.Name, dependent, err)
 				continue
 			}
 			// check that the target still wants to replicate the object
 			if val, ok := resolveAnnotation(targetMeta, ReplicationSourceAnnotation); !ok || val != key {
-				log.Printf("annotation of dependent %s %s changed", r.Name, dependentKey)
+				log.Printf("annotation of dependent %s %s changed", r.Name, dependent)
 				continue
 			}
 			// this target still wants to replicate the object
-			updatedReplicas = append(updatedReplicas, dependentKey)
+			updatedReplicas = append(updatedReplicas, dependent)
 			// replicate the object again
 			r.replicateObject(targetObject, object)
 		}
@@ -366,35 +382,35 @@ Targets:
 	// this object was replicated by another, update it
 	if val, ok := meta.Annotations[CreatedByAnnotation]; ok {
 		log.Printf("%s %s is replicated by %s", r.Name, key, val)
-		sourceObject, exists, err := r.objectStore.GetByKey(val)
+		sourceObject, sourceMeta, err := r.objectFromStore(val, false)
 		reason := ""
 
 		if err != nil {
-			log.Printf("could not get %s %s: %s", r.Name, val, err)
+			log.Printf("could not get source %s %s: %s", r.Name, val, err)
 			return
 		// the source has been deleted, so should this object be
-		} else if !exists {
+		} else if sourceObject == nil {
 			log.Printf("source %s %s deleted: deleting target %s", r.Name, val, key)
 			reason = "source does not exist"
 
-		} else if ok, err := r.isReplicatedTo(r.getMeta(sourceObject), meta); err != nil {
+		} else if ok, err := r.isReplicatedTo(sourceMeta, meta); err != nil {
 			log.Printf("could not parse %s %s: %s", r.Name, val, err)
 			return
 		// the source annotations have changed, this replication is deleted
 		} else if !ok {
 			log.Printf("source %s %s is not replicated to %s: deleting target", r.Name, val, key)
-			exists = false
-			reason = "source has wrong \"replicate-to\" annotations"
+			sourceObject = nil
+			reason = "source has changed \"replicate-to\" annotations"
 		}
 		// no source, delete it
-		if !exists {
+		if sourceObject == nil {
 			r.doDeleteObject(meta, object, reason)
 			return
 		// source is here, install it
 		} else if err := r.installObject("", object, sourceObject); err != nil {
 			return
 		// get it back after edit
-		} else if obj, m, err := r.objectFromStore(key); err != nil {
+		} else if obj, m, err := r.objectFromStore(key, true); err != nil {
 			log.Printf("could not get %s %s: %s", r.Name, key, err)
 			return
 		// continue
@@ -404,26 +420,21 @@ Targets:
 			targets = nil
 			targetPatterns = nil
 		}
-	}
 	// this object is replicated to other locations
-	if targets != nil || targetPatterns != nil {
-		existsNamespaces := map[string]bool{} // a cache to remember the done lookups
-		existingTargets := []string{} // the slice of all the target this object should replicate to
+	// it cannot be both replicated by an object and replicated to another
+	} else if targets != nil || targetPatterns != nil {
+		// all the namespaces
+		namespaces := r.namespaceStore.ListKeys()
+		existsNamespaces := map[string]bool{}
+		for _, ns := range namespaces {
+			existsNamespaces[ns] = true
+		}
+		// the slice of all the target this object should replicate to
+		existingTargets := []string{}
 
 		for _, t := range(targets) {
 			ns := strings.SplitN(t, "/", 2)[0]
-			var exists, ok bool
-			var err error
-			// already in cache
-			if exists, ok = existsNamespaces[ns]; ok {
-			// get it
-			} else if _, exists, err = r.namespaceStore.GetByKey(ns); err == nil {
-				existsNamespaces[ns] = exists
-			}
-
-			if err != nil {
-				log.Printf("could not get namespace %s: %s", ns, err)
-			} else if exists {
+			if existsNamespaces[ns] {
 				existingTargets = append(existingTargets, t)
 			} else {
 				log.Printf("replication of %s %s to %s cancelled: no namespace %s",
@@ -432,7 +443,6 @@ Targets:
 		}
 
 		if len(targetPatterns) > 0 {
-			namespaces := r.namespaceStore.ListKeys()
 			// cache all existing targets
 			seen := map[string]bool{key: true}
 			for _, t := range(existingTargets) {
@@ -478,11 +488,11 @@ Targets:
 		}
 		r.targetsFrom[val] = append(r.targetsFrom[val], key)
 
-		if sourceObject, exists, err := r.objectStore.GetByKey(val); err != nil {
-			log.Printf("could not get %s %s: %s", r.Name, val, err)
+		if sourceObject, _, err := r.objectFromStore(val, false); err != nil {
+			log.Printf("could not get source %s %s: %s", r.Name, val, err)
 			return
 		// the source does not exist anymore/yet, clear the data of the target
-		} else if !exists {
+		} else if sourceObject == nil {
 			log.Printf("source %s %s deleted: clearing target %s", r.Name, val, key)
 			r.doClearObject(object, "source does not exist")
 		// update the target
@@ -494,7 +504,7 @@ Targets:
 
 // An object requests to have a copy of another usinf the "replicate-from" annotation
 // Updates the data of an object with the data from the source
-func (r *objectReplicator) replicateObject(object interface{}, sourceObject  interface{}) error {
+func (r *objectReplicator) replicateObject(object interface{}, sourceObject interface{}) error {
 	meta := r.getMeta(object)
 	sourceMeta := r.getMeta(sourceObject)
 	_, replicated := meta.Annotations[ReplicatedVersionAnnotation]
@@ -517,6 +527,7 @@ func (r *objectReplicator) replicateObject(object interface{}, sourceObject  int
 	for k, v := range meta.Annotations {
 		annotations[k] = v
 	}
+	delete(annotations, CheckedAnnotation)
 	annotations[ReplicationTimeAnnotation] = time.Now().Format(time.RFC3339)
 	annotations[ReplicatedVersionAnnotation] = sourceMeta.ResourceVersion
 	if val, ok := sourceMeta.Annotations[ReplicateOnceVersionAnnotation]; ok {
@@ -554,14 +565,14 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 			return err
 		}
 		// error while getting the target
-		if obj, exists, err := r.objectStore.GetByKey(target); err != nil {
-			log.Printf("could not get %s %s: %s", r.Name, target, err)
+		if obj, meta, err := r.objectFromStore(target, false); err != nil {
+			log.Printf("could not get target %s %s: %s", r.Name, target, err)
 			return err
 		// the target exists already
-		} else if exists {
+		} else if obj != nil {
 			// update related objects
 			targetObject = obj
-			targetMeta = r.getMeta(targetObject)
+			targetMeta = meta
 			// check if target was created by replication from source
 			if ok, err := r.isReplicatedBy(targetMeta, sourceMeta); !ok {
 				log.Printf("replication of %s %s/%s is cancelled: %s",
@@ -687,6 +698,8 @@ func (r *objectReplicator) installObject(target string, targetObject interface{}
 // A wrapper around replicatorActions.install
 func (r *objectReplicator) doInstallObject(meta *metav1.ObjectMeta, sourceObject interface{}, dataObject interface{}, reason string) error {
 	log.Printf("installing %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, reason)
+	// clear the checked annotation
+	delete(meta.Annotations, CheckedAnnotation)
 	object, err := r.install(&r.replicatorProps, meta, sourceObject, dataObject)
 	if err != nil {
 		log.Printf("error while installing %s %s/%s: %s", r.Name, meta.Namespace, meta.Name, err)
@@ -698,15 +711,29 @@ func (r *objectReplicator) doInstallObject(meta *metav1.ObjectMeta, sourceObject
 }
 
 // Returns an object from the store with its meta object
-// Returns an error if it does not exist
-func (r *objectReplicator) objectFromStore(key string) (interface{}, *metav1.ObjectMeta, error) {
-	if object, exists, err := r.objectStore.GetByKey(key); err != nil {
-		return nil, nil, fmt.Errorf("could not get %s %s: %s", r.Name, key, err)
+// If it doesn't exist, returns an error if mustExist, else return nil
+func (r *objectReplicator) objectFromStore(key string, mustExist bool) (interface{}, *metav1.ObjectMeta, error) {
+	object, exists, err := r.objectStore.GetByKey(key)
+	if err != nil {
+		return nil, nil, err
+	// the object does not exists, these field should neither
 	} else if !exists {
-		return nil, nil, fmt.Errorf("could not get %s %s: does not exist", r.Name, key)
-	} else {
-		return object, r.getMeta(object), nil
+		delete(r.watchedTargets, key)
+		delete(r.watchedPatterns, key)
+		// reply with an error if mustExist
+		if mustExist {
+			err = fmt.Errorf("does not exist")
+		}
+		return nil, nil, err
 	}
+	meta := r.getMeta(object)
+	// annotations are wrong, clear those fields
+	if _, err := updateDeprecatedAnnotations(meta); err != nil {
+		delete(r.watchedTargets, key)
+		delete(r.watchedPatterns, key)
+		return nil, nil, err
+	}
+	return object, meta, nil
 }
 
 // Called when an object is deleted
@@ -786,16 +813,12 @@ func (r *objectReplicator) ObjectDeleted(object interface{}) {
 	}
 	// find the first source that still wants to replicate
 	for source := range todo {
-		if sourceObject, exists, err := r.objectStore.GetByKey(source); err != nil {
-			log.Printf("could not get %s %s: %s", r.Name, source, err)
-		// it should not happen, but maybe `ObjectDeleted` hasn't been called yet
-		// just clean watched targets to avoid this to happen again
-		} else if !exists {
-			log.Printf("%s %s not found", r.Name, source)
+		if sourceObject, sourceMeta, err := r.objectFromStore(source, true); err != nil {
+			log.Printf("could not get source %s %s: %s", r.Name, source, err)
+		// annotations of the source got wrong, clear the fields
+		} else if ok, err := r.isReplicatedTo(sourceMeta, meta); err != nil {
 			delete(r.watchedTargets, source)
 			delete(r.watchedPatterns, source)
-
-		} else if ok, err := r.isReplicatedTo(r.getMeta(sourceObject), meta); err != nil {
 			log.Printf("could not parse %s %s: %s", r.Name, source, err)
 		// the source sitll want to be replicated, so let's do it
 		} else if ok {
@@ -810,7 +833,7 @@ func (r *objectReplicator) ObjectDeleted(object interface{}) {
 func (r *objectReplicator) clearObject(key string, sourceObject interface{}) (bool, error) {
 	sourceMeta := r.getMeta(sourceObject)
 
-	targetObject, targetMeta, err := r.objectFromStore(key)
+	targetObject, targetMeta, err := r.objectFromStore(key, true)
 	if err != nil {
 		log.Printf("could not load dependent %s: %s", r.Name, err)
 		return false, err
@@ -837,6 +860,7 @@ func (r *objectReplicator) doClearObject(object interface{}, reason string) erro
 	for k, v := range meta.Annotations {
 		annotations[k] = v
 	}
+	delete(annotations, CheckedAnnotation)
 	annotations[ReplicationTimeAnnotation] = time.Now().Format(time.RFC3339)
 	delete(annotations, ReplicatedVersionAnnotation)
 	delete(annotations, ReplicateOnceVersionAnnotation)
@@ -857,7 +881,7 @@ func (r *objectReplicator) doClearObject(object interface{}, reason string) erro
 func (r *objectReplicator) deleteObject(key string, sourceObject interface{}, reason string) (bool, error) {
 	sourceMeta := r.getMeta(sourceObject)
 
-	object, meta, err := r.objectFromStore(key)
+	object, meta, err := r.objectFromStore(key, true)
 	if err != nil {
 		log.Printf("could not get %s %s: %s", r.Name, key, err)
 		return false, err

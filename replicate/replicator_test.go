@@ -53,10 +53,24 @@ func TestFromAnnotation(t *testing.T) {
 		replicated: true,
 		allowAll:   true,
 	}, {
+		name:       "allow all but other annotation",
+		replicated: false,
+		allowAll:   true,
+		annotations: map[string]string {
+			AnnotationsPrefix + "other-annotations": "true",
+		},
+	}, {
 		name:       "allow",
 		replicated: true,
 		annotations: map[string]string {
 			ReplicationAllowedAnnotation: "true",
+		},
+	}, {
+		name:       "allow but other annotation",
+		replicated: false,
+		annotations: map[string]string {
+			ReplicationAllowedAnnotation: "true",
+			AnnotationsPrefix + "other-annotations": "true",
 		},
 	}, {
 		name:       "allow same namespace",
@@ -248,7 +262,7 @@ func TestFromAnnotation(t *testing.T) {
 			return true
 		}
 		// try with different orders
-		repl := NewFakeReplicator(example.allowAll)
+		repl := NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			source(repl) &&
 			target(repl) &&
@@ -259,7 +273,7 @@ func TestFromAnnotation(t *testing.T) {
 			source(repl) &&
 			test(repl),
 			example.name)
-		repl = NewFakeReplicator(example.allowAll)
+		repl = NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			target(repl) &&
 			source(repl) &&
@@ -323,6 +337,14 @@ func TestToAnnotation(t *testing.T) {
 		annotations: map[string]string {
 			ReplicationTargetsAnnotation: "target-name",
 			TargetNamespacesAnnotation: "target-namespace",
+		},
+		namespace:   "target-namespace",
+	},{
+		testName:    "both annotations but other annotation",
+		annotations: map[string]string {
+			ReplicationTargetsAnnotation: "target-name",
+			TargetNamespacesAnnotation: "target-namespace",
+			AnnotationsPrefix + "other-annotations": "true",
 		},
 		namespace:   "target-namespace",
 	},{
@@ -502,7 +524,7 @@ func TestToAnnotation(t *testing.T) {
 			return true
 		}
 		// try in different orders
-		repl := NewFakeReplicator(false)
+		repl := NewFakeReplicator(t, false)
 		assert.True(t,
 			source(repl) &&
 			target(repl) &&
@@ -511,7 +533,7 @@ func TestToAnnotation(t *testing.T) {
 			source(repl) &&
 			test(repl),
 			example.testName)
-		repl = NewFakeReplicator(false)
+		repl = NewFakeReplicator(t, false)
 		assert.True(t,
 			target(repl) &&
 			source(repl) &&
@@ -564,6 +586,18 @@ func TestFromToAnnotation(t *testing.T) {
 		replicated:      true,
 		source:          map[string]string{
 			ReplicationAllowedAnnotation: "true",
+		},
+		middle:          map[string]string{
+			ReplicationSourceAnnotation: "source-namespace/source-name",
+			ReplicationTargetsAnnotation: "target-namespace/target-name",
+		},
+		targetName:      "target-name",
+	},{
+		name:            "from annotation, allowed, but other annotation",
+		replicated:      false,
+		source:          map[string]string{
+			ReplicationAllowedAnnotation: "true",
+			AnnotationsPrefix + "other-annotations": "true",
 		},
 		middle:          map[string]string{
 			ReplicationSourceAnnotation: "source-namespace/source-name",
@@ -843,7 +877,7 @@ func TestFromToAnnotation(t *testing.T) {
 			return true
 		}
 		// try in different orders
-		repl := NewFakeReplicator(example.allowAll)
+		repl := NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			source(repl) &&
 			middle(repl) &&
@@ -853,7 +887,7 @@ func TestFromToAnnotation(t *testing.T) {
 			source(repl) &&
 			test(repl),
 			example.name)
-		repl = NewFakeReplicator(example.allowAll)
+		repl = NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			source(repl) &&
 			target(repl) &&
@@ -862,7 +896,7 @@ func TestFromToAnnotation(t *testing.T) {
 			clearMiddle(repl) &&
 			middle(repl),
 			example.name)
-		repl = NewFakeReplicator(example.allowAll)
+		repl = NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			middle(repl) &&
 			source(repl) &&
@@ -872,7 +906,7 @@ func TestFromToAnnotation(t *testing.T) {
 			source(repl) &&
 			test(repl),
 			example.name)
-		repl = NewFakeReplicator(example.allowAll)
+		repl = NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			middle(repl) &&
 			target(repl) &&
@@ -883,7 +917,7 @@ func TestFromToAnnotation(t *testing.T) {
 			middle(repl) &&
 			test(repl),
 			example.name)
-		repl = NewFakeReplicator(example.allowAll)
+		repl = NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			target(repl) &&
 			source(repl) &&
@@ -893,7 +927,7 @@ func TestFromToAnnotation(t *testing.T) {
 			source(repl) &&
 			test(repl),
 			example.name)
-		repl = NewFakeReplicator(example.allowAll)
+		repl = NewFakeReplicator(t, example.allowAll)
 		assert.True(t,
 			target(repl) &&
 			middle(repl) &&
@@ -935,7 +969,7 @@ func TestToAnnotation_ManyTargets(t *testing.T) {
 		"namespace-456/target-name1",
 		"namespace-456/target-name2",
 	}
-	repl := NewFakeReplicator(false)
+	repl := NewFakeReplicator(t, false)
 
 	var err error
 	source := NewFake("source-namespace", "source-name", "before-data",
@@ -1025,7 +1059,7 @@ func TestToAnnotation_ManyTargets(t *testing.T) {
 
 // test replicate-to annotation while updated
 func TestToAnnotation_AnnotaionsUpdate(t *testing.T) {
-	repl := NewFakeReplicator(false)
+	repl := NewFakeReplicator(t, false)
 	err := repl.InitNamespaces([]string {"ns1", "ns2", "ns3", "ns4", "ns5"})
 	require.NoError(t, err)
 
@@ -1110,7 +1144,7 @@ func TestToAnnotation_AnnotaionsUpdate(t *testing.T) {
 
 // test replicate-to annotation while targets exist
 func TestToAnnotation_TargetExists(t *testing.T) {
-	repl := NewFakeReplicator(false)
+	repl := NewFakeReplicator(t, false)
 	source := NewFake("source-namespace", "source-name", "source-data",
 		map[string]string {
 			ReplicationTargetsAnnotation: "target-name",
@@ -1247,7 +1281,7 @@ func TestToAnnotation_TargetExists(t *testing.T) {
 
 // test replicate-from annotation while the source or target is updated
 func TestFromAnnotation_Updates(t *testing.T) {
-	repl := NewFakeReplicator(false)
+	repl := NewFakeReplicator(t, false)
 	test := func (source *FakeObject) {
 		target, err := repl.GetFake("target-namespace", "target-name")
 		if !assert.NoError(t, err) || !assert.NotNil(t, target) {
@@ -1336,4 +1370,76 @@ func TestFromAnnotation_Updates(t *testing.T) {
 	assert.Equal(t, calls + 1, repl.Calls())
 	calls = repl.Calls()
 	test(nil)
+}
+
+// test deprecated annotations update
+func Test_deprecated_annotations(t *testing.T) {
+	previous := AnnotationsPrefix
+	deprecated["deprecated-once"] = "replicate-once"
+	PrefixAnnotations("test-deprecated/")
+	defer func() {
+		delete(deprecated, "deprecated-once")
+		PrefixAnnotations(previous)
+	}()
+	examples := []struct{
+		name   string
+		before map[string]string
+		after  map[string]string
+	}{{
+		"ok",
+		map[string]string {
+			ReplicationAllowedAnnotation: "true",
+		},
+		nil,
+	},{
+		"update",
+		map[string]string {
+			ReplicationAllowedAnnotation: "true",
+			"test-deprecated/deprecated-once": "true",
+		},
+		map[string]string {
+			ReplicationAllowedAnnotation: "true",
+			"test-deprecated/replicate-once": "true",
+		},
+	},{
+		"invalid",
+		map[string]string {
+			ReplicationAllowedAnnotation: "true",
+			"test-deprecated/other-annotation": "true",
+		},
+		nil,
+	}}
+	for _, example := range examples {
+		update := example.after != nil
+		if example.after == nil {
+			example.after = example.before
+		}
+		fake := NewFake("target-namespace", "target-name", "target-data", example.before)
+		repl := NewFakeReplicator(t, false)
+		if !assert.NoError(t, repl.SetAddFake(fake), example.name) {
+			continue
+		}
+		fake, err := repl.GetFake("target-namespace", "target-name")
+		if !assert.NoError(t, err, example.name) || !assert.NotNil(t, fake, example.name) {
+			continue
+		}
+		if !assert.NoError(t, repl.SetAddFake(fake), example.name) {
+			continue
+		}
+		fake, err = repl.GetFake("target-namespace", "target-name")
+		if !assert.NoError(t, err, example.name) || !assert.NotNil(t, fake, example.name) {
+			continue
+		}
+		after := map[string]string{}
+		for k, v := range fake.Annotations {
+			after[k] = v
+		}
+		delete(after, CheckedAnnotation)
+		assert.Equal(t, example.after, after, example.name)
+		if update {
+			assert.Equal(t, 1, repl.Calls(), example.name)
+		} else {
+			assert.Equal(t, 0, repl.Calls(), example.name)
+		}
+	}
 }

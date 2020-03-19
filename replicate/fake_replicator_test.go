@@ -3,7 +3,9 @@ package replicate
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strconv"
+	"testing"
 	"time"
 
 	"k8s.io/api/core/v1"
@@ -13,8 +15,22 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/testing"
+	ktesting "k8s.io/client-go/testing"
+
+	"github.com/stretchr/testify/assert"
 )
+
+var validAnnotation = regexp.MustCompile(`^[-A-Za-z0-9_./]+$`)
+func IsAnnotationsValid(t *testing.T, annotations map[string]string, msgAndArgs ...interface{}) bool {
+	valid := true
+	for annotation, _ := range annotations {
+		if !validAnnotation.MatchString(annotation) {
+			assert.Fail(t, fmt.Sprintf("invalid annotations \"%s\"", annotation), msgAndArgs...)
+			valid = false
+		}
+	}
+	return valid
+}
 
 // A verion number, continously decremented
 // It is decreasing instead of increasing, to not be tempted to compare them
@@ -72,6 +88,7 @@ func (f *FakeObject) Update(data string, annotations map[string]string) *FakeObj
 	for k, v := range annotations {
 		copy[k] = v
 	}
+	delete(copy, CheckedAnnotation)
 	fake.Annotations = copy
 	fake.ResourceVersion = "fake" + strconv.Itoa(fake.Version)
 	return fake
@@ -83,6 +100,7 @@ func (f *FakeObject) DeepCopyObject() runtime.Object { return f.DeepCopy() }
 // replicatorActions for fake objects
 // Stores the version of each object, and the list of successfully performed actions
 type FakeReplicatorActions struct {
+	t        *testing.T
 	Versions map[string]int
 	Actions  []FakeAction
 	Calls    int
@@ -134,9 +152,10 @@ func (a *FakeReplicatorActions) newAction(action string, fake *FakeObject) {
 func (*FakeReplicatorActions) getMeta(object interface{}) *metav1.ObjectMeta {
 	return &object.(*FakeObject).ObjectMeta
 }
-// Updates a fake object is the version is right, and stores the action
+// Updates a fake object if the version is right, and stores the action
 func (a *FakeReplicatorActions) update(r *replicatorProps, object interface{}, sourceObject interface{}, annotations map[string]string) (interface{}, error) {
 	a.Calls ++
+	IsAnnotationsValid(a.t, annotations)
 	fake, err := a.getObject(object)
 	if err != nil {
 		return fake, err
@@ -149,6 +168,7 @@ func (a *FakeReplicatorActions) update(r *replicatorProps, object interface{}, s
 // Clears a fake object is the version is right, and stores the action
 func (a *FakeReplicatorActions) clear(r *replicatorProps, object interface{}, annotations map[string]string) (interface{}, error) {
 	a.Calls ++
+	IsAnnotationsValid(a.t, annotations)
 	fake, err := a.getObject(object)
 	if err != nil {
 		return fake, err
@@ -161,6 +181,7 @@ func (a *FakeReplicatorActions) clear(r *replicatorProps, object interface{}, an
 // Installs a fake object is the version is right, and stores the action
 func (a *FakeReplicatorActions) install(r *replicatorProps, meta *metav1.ObjectMeta, sourceObject interface{}, dataObject interface{}) (interface{}, error) {
 	a.Calls ++
+	IsAnnotationsValid(a.t, meta.Annotations)
 	var action string
 	fake := &FakeObject {
 		ObjectMeta: *meta,
@@ -222,7 +243,7 @@ func namespaceKeyFunc(obj interface{}) (string, error) {
 	}
 }
 // Create a objectReplicator for fake objects
-func NewFakeReplicator(allowAll bool) *FakeReplicator {
+func NewFakeReplicator(t *testing.T, allowAll bool) *FakeReplicator {
 	objectStore := cache.NewStore(fakeKeyFunc)
 	namespaceStore := cache.NewStore(namespaceKeyFunc)
 	repl := &FakeReplicator {
@@ -234,6 +255,7 @@ func NewFakeReplicator(allowAll bool) *FakeReplicator {
 				namespaceStore: namespaceStore,
 			},
 			replicatorActions: &FakeReplicatorActions {
+				t:        t,
 				Versions: map[string]int{},
 				Actions:  []FakeAction{},
 			},
@@ -309,7 +331,7 @@ func (r *FakeReplicator) InitFakes(fakes []*FakeObject) error {
 	objects := []interface{}{}
 	for _, fake := range fakes {
 		versions[fake.Key()] = fake.Version
-		objects = append(objects, fake)
+		objects = append(objects, fake.DeepCopy())
 	}
 	r.replicatorActions.(*FakeReplicatorActions).Versions = versions
 
@@ -356,6 +378,7 @@ func (r *FakeReplicator) GetFake(namespace string, name string) (*FakeObject, er
 }
 // Notifies a new Fake
 func (r *FakeReplicator) AddFake(fake *FakeObject) error {
+	fake = fake.DeepCopy()
 	if err := r.objectStore.Add(fake); err != nil {
 		return err
 	}
@@ -415,8 +438,8 @@ func GetMeta(obj interface{}) (*metav1.ObjectMeta, error) {
 }
 
 // Add an object reactor to the client, in order to manage resource versions
-func AddResourceVersionReactor(client *fake.Clientset) {
-	client.PrependReactor("*", "*", func(action testing.Action) (bool, runtime.Object, error) {
+func AddResourceVersionReactor(t *testing.T, client *fake.Clientset) {
+	client.PrependReactor("*", "*", func(action ktesting.Action) (bool, runtime.Object, error) {
 		ns := action.GetNamespace()
 		gvr := action.GetResource()
 		// Here and below we need to switch on implementation types,
@@ -425,20 +448,22 @@ func AddResourceVersionReactor(client *fake.Clientset) {
 		// updates and creates end up matching the same case branch.
 		switch action := action.(type) {
 
-		case testing.CreateActionImpl:
+		case ktesting.CreateActionImpl:
 			objMeta, err := GetMeta(action.GetObject())
 			if err != nil {
 				return true, nil, err
 			}
+			IsAnnotationsValid(t, objMeta.Annotations)
 			objMeta.ResourceVersion = "fake" + strconv.Itoa(fakeVersion)
 			fakeVersion --
 			return false, nil, nil
 
-		case testing.UpdateActionImpl:
+		case ktesting.UpdateActionImpl:
 			objMeta, err := GetMeta(action.GetObject())
 			if err != nil {
 				return true, nil, err
 			}
+			IsAnnotationsValid(t, objMeta.Annotations)
 			old, err := client.Tracker().Get(gvr, ns, objMeta.GetName())
 			if err != nil {
 				return true, nil, err

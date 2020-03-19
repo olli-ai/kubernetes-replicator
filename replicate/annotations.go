@@ -26,7 +26,7 @@ var annotationPointers = map[string]*string {
 	"replication-allowed-namespaces": &AllowedNamespacesAnnotation,
 }
 
-var AllAnnotations = map[string]bool {}
+var AllAnnotations map[string]bool
 
 var CopyLabels = map[string]string {
 	"managed-by": "kubernetes-replicator",
@@ -36,26 +36,15 @@ var deprecated map[string]string = map[string]string {
 	"replicated-from-version": "replicated-version",
 }
 
-var DeprecatedAnnotations = map[string]string {}
+var DeprecatedAnnotations map[string]string
 
 var AnnotationsPrefix = ""
 
 func init() {
-	for name, ptr := range annotationPointers {
-		*ptr = name
-		AllAnnotations[name] = true
-	}
-	for old, new := range deprecated {
-		DeprecatedAnnotations[old] = new
-	}
+	PrefixAnnotations("kubernetes-replicator/")
 }
 
 func PrefixAnnotations(prefix string){
-	if deprecated == nil {
-		for k, v := range DeprecatedAnnotations {
-			deprecated[k] = v
-		}
-	}
 	AnnotationsPrefix = prefix
 	a := map[string]bool {}
 	for name, ptr := range annotationPointers {

@@ -52,7 +52,7 @@ func (c *SecretsFakeSecrets) Delete(name string, options *metav1.DeleteOptions) 
 // Test that update and clear correctly manages the data
 func TestSecrets_update_clear(t *testing.T) {
 	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
-	AddResourceVersionReactor(&client.Clientset)
+	AddResourceVersionReactor(t, &client.Clientset)
 	repl := NewSecretReplicator(client, time.Hour, false)
 	stop := repl.Start()
 	defer stop()
@@ -137,7 +137,7 @@ func TestSecrets_update_clear(t *testing.T) {
 // Test that versionning works with update and clear
 func TestSecrets_update_clear_version(t *testing.T) {
 	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
-	AddResourceVersionReactor(&client.Clientset)
+	AddResourceVersionReactor(t, &client.Clientset)
 	repl := NewSecretReplicator(client, time.Hour, false).(*objectReplicator)
 
 	namespace := client.CoreV1().Namespaces()
@@ -247,7 +247,7 @@ func TestSecrets_update_clear_version(t *testing.T) {
 // Test that install and delete correctly manages the data
 func TestSecrets_install_delete(t *testing.T) {
 	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
-	AddResourceVersionReactor(&client.Clientset)
+	AddResourceVersionReactor(t, &client.Clientset)
 	repl := NewSecretReplicator(client, time.Hour, false)
 	stop := repl.Start()
 	defer stop()
@@ -334,7 +334,7 @@ func TestSecrets_install_delete(t *testing.T) {
 // Test that versionning works with install and delete
 func TestSecrets_install_delete_version(t *testing.T) {
 	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
-	AddResourceVersionReactor(&client.Clientset)
+	AddResourceVersionReactor(t, &client.Clientset)
 	repl := NewSecretReplicator(client, time.Hour, false).(*objectReplicator)
 
 	namespace := client.CoreV1().Namespaces()
@@ -422,4 +422,142 @@ func TestSecrets_install_delete_version(t *testing.T) {
 		assert.Equal(t, placeholder.ResourceVersion, target.ResourceVersion)
 		assert.Equal(t, placeholder.Data, target.Data)
 	}
+}
+
+// Test the from-to mechanism more precisely
+func TestSecrets_from_to(t *testing.T) {
+	client := &SecretsFakeClient{*fake.NewSimpleClientset()}
+	AddResourceVersionReactor(t, &client.Clientset)
+	repl := NewSecretReplicator(client, time.Hour, false)
+	stop := repl.Start()
+	defer stop()
+	time.Sleep(SafeDuration)
+
+	namespace := client.CoreV1().Namespaces()
+	_, err := namespace.Create(&v1.Namespace {
+		ObjectMeta: metav1.ObjectMeta {
+			Name: "source-namespace",
+		},
+	})
+	require.NoError(t, err)
+	_, err = namespace.Create(&v1.Namespace {
+		ObjectMeta: metav1.ObjectMeta {
+			Name: "middle-namespace",
+		},
+	})
+	require.NoError(t, err)
+	_, err = namespace.Create(&v1.Namespace {
+		ObjectMeta: metav1.ObjectMeta {
+			Name: "target-namespace",
+		},
+	})
+	require.NoError(t, err)
+
+	middle, err := client.CoreV1().Secrets("middle-namespace").Create(&v1.Secret {
+		TypeMeta:   metav1.TypeMeta {
+			Kind:       "middle-kind",
+			APIVersion: "middle-version",
+		},
+		ObjectMeta: metav1.ObjectMeta {
+			Name:        "middle-name",
+			Namespace:   "middle-namespace",
+			Annotations: map[string]string {
+				ReplicationTargetsAnnotation: "target-namespace/target-name",
+				ReplicationSourceAnnotation:  "source-namespace/source1-name",
+			},
+		},
+		Data:       map[string][]byte {
+			"middle-data": []byte("true"),
+			"data-field":  []byte("middle-data"),
+		},
+	})
+	require.NoError(t, err)
+
+	time.Sleep(SafeDuration)
+	target, err := client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
+	require.NoError(t, err)
+	if assert.NotNil(t, target) {
+		assert.Equal(t, middle.TypeMeta, target.TypeMeta)
+		assert.Empty(t, target.Data)
+	}
+
+	source1, err := client.CoreV1().Secrets("source-namespace").Create(&v1.Secret {
+		TypeMeta:   metav1.TypeMeta {
+			Kind:       "source1-kind",
+			APIVersion: "source1-version",
+		},
+		ObjectMeta: metav1.ObjectMeta {
+			Name:        "source1-name",
+			Namespace:   "source-namespace",
+			Annotations: map[string]string {
+				ReplicationAllowedAnnotation: "true",
+			},
+		},
+		Data:       map[string][]byte {
+			"source1-data": []byte("true"),
+			"data-field":   []byte("source1-data"),
+		},
+	})
+	require.NoError(t, err)
+
+	time.Sleep(SafeDuration)
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
+	require.NoError(t, err)
+	if assert.NotNil(t, target) {
+		assert.Equal(t, middle.TypeMeta, middle.TypeMeta)
+		assert.Equal(t, source1.Data, target.Data)
+	}
+
+	source2, err := client.CoreV1().Secrets("source-namespace").Create(&v1.Secret {
+		TypeMeta:   metav1.TypeMeta {
+			Kind:       "source2-kind",
+			APIVersion: "source2-version",
+		},
+		ObjectMeta: metav1.ObjectMeta {
+			Name:        "source2-name",
+			Namespace:   "source-namespace",
+			Annotations: map[string]string {
+				ReplicationAllowedAnnotation: "true",
+			},
+		},
+		Data:       map[string][]byte {
+			"source2-data": []byte("true"),
+			"data-field":   []byte("source2-data"),
+		},
+	})
+	require.NoError(t, err)
+	middle = middle.DeepCopy()
+	middle.Annotations[ReplicationSourceAnnotation] = "source-namespace/source2-name"
+	middle, err = client.CoreV1().Secrets("middle-namespace").Update(middle)
+
+	time.Sleep(SafeDuration)
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
+	require.NoError(t, err)
+	if assert.NotNil(t, target) {
+		assert.Equal(t, middle.TypeMeta, middle.TypeMeta)
+		assert.Equal(t, source2.Data, target.Data)
+	}
+
+	err = client.CoreV1().Secrets("source-namespace").Delete("source2-name", &metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	time.Sleep(SafeDuration)
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
+	require.NoError(t, err)
+	if assert.NotNil(t, target) {
+		assert.Equal(t, middle.TypeMeta, target.TypeMeta)
+		assert.Empty(t, target.Data)
+	}
+
+	err = client.CoreV1().Secrets("middle-namespace").Delete("middle-name", &metav1.DeleteOptions{})
+	require.NoError(t, err)
+
+	time.Sleep(SafeDuration)
+	target, err = client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
+	if assert.Error(t, err) {
+		require.IsType(t, &errors.StatusError{}, err)
+		status := err.(*errors.StatusError)
+		require.Equal(t, metav1.StatusReasonNotFound, status.ErrStatus.Reason)
+	}
+	assert.Nil(t, target)
 }
