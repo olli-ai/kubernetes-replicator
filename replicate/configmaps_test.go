@@ -484,9 +484,6 @@ func TestConfigMaps_from_to(t *testing.T) {
 	client := &ConfigMapsFakeClient{*fake.NewSimpleClientset()}
 	AddResourceVersionReactor(t, &client.Clientset)
 	repl := NewConfigMapReplicator(client, time.Hour, false)
-	stop := repl.Start()
-	defer stop()
-	time.Sleep(SafeDuration)
 
 	namespace := client.CoreV1().Namespaces()
 	_, err := namespace.Create(&v1.Namespace {
@@ -531,6 +528,10 @@ func TestConfigMaps_from_to(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+
+	stop := repl.Start()
+	defer stop()
+	time.Sleep(time.Second) // takes much more time for some reason
 
 	time.Sleep(SafeDuration)
 	target, err := client.CoreV1().ConfigMaps("target-namespace").Get("target-name", metav1.GetOptions{})

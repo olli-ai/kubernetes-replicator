@@ -24,7 +24,7 @@ builder-image:
 	@docker build -t "${DOCKER_IMAGE}" .
 
 test:
-	"$(GOCMD)" test -timeout 1800s -v ./... -run ${TESTS}
+	"$(GOCMD)" test -v ./... -run ${TESTS}
 
 clean-images:
 	@docker rmi "${DOCKER_REPOSITORY}"

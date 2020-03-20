@@ -120,7 +120,7 @@ func (r *objectReplicator) InitObjectStore(resyncPeriod time.Duration, objectsIn
 				items := resp[0].Elem().FieldByName("Items")
 				length := items.Len()
 				copy := make([]interface{}, length)
-				for index := 0; index < length; length ++ {
+				for index := 0; index < length; index ++ {
 					copy[index] = items.Index(index).Addr().Interface()
 				}
 				r.objectStore.Replace(copy, "init")

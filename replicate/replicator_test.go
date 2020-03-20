@@ -14,10 +14,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
-  if os.Getenv("LOG") != "true" {
-  	log.SetOutput(ioutil.Discard)
-  }
-  os.Exit(m.Run())
+	if os.Getenv("LOG") != "true" {
+		log.SetOutput(ioutil.Discard)
+	}
+	os.Exit(m.Run())
 }
 
 var validTimesptamp = regexp.MustCompile(`^\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d`)
