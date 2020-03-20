@@ -499,6 +499,10 @@ func annotationRefersTo(object *metav1.ObjectMeta, annotation string, reference 
 // Returns false if the annotations are ok
 // Uses the speciall annotation CheckedAnnotation to cache the status
 func updateDeprecatedAnnotations(object *metav1.ObjectMeta) (bool, error) {
+	// nil annotations are always valid
+	if object.Annotations == nil {
+		return false, nil
+	}
 	// look for CheckedAnnotation (cached status)
 	if value, ok := object.Annotations[CheckedAnnotation]; ok {
 		if value == "valid" {

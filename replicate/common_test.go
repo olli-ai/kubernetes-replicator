@@ -1318,6 +1318,13 @@ func Test_updateDeprecatedAnnotations(t *testing.T) {
 		before map[string]string
 		after  map[string]string
 	}{{
+		"nil",
+		"nil/",
+		false,
+		false,
+		nil,
+		nil,
+	}, {
 		"empty",
 		"empty/",
 		false,
@@ -1460,7 +1467,9 @@ func Test_updateDeprecatedAnnotations(t *testing.T) {
 			assert.Equal(t, example.after, meta.Annotations, example.name)
 		} else {
 			assert.False(t, example.error, example.name)
-			example.after[CheckedAnnotation] = "valid"
+			if example.after != nil {
+				example.after[CheckedAnnotation] = "valid"
+			}
 			assert.NoError(t, err, example.name)
 			assert.False(t, update, example.name)
 			assert.Equal(t, example.after, meta.Annotations, example.name)

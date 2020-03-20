@@ -366,7 +366,7 @@ func TestConfigMaps_install_delete(t *testing.T) {
 	if assert.Error(t, err) {
 		require.IsType(t, &errors.StatusError{}, err)
 		status := err.(*errors.StatusError)
-		require.Equal(t, metav1.StatusReasonNotFound, status.ErrStatus.Reason)
+		require.Equal(t, metav1.StatusReasonNotFound, status.Status().Reason)
 	}
 	assert.Nil(t, target)
 }
@@ -629,7 +629,7 @@ func TestConfigMaps_from_to(t *testing.T) {
 	if assert.Error(t, err) {
 		require.IsType(t, &errors.StatusError{}, err)
 		status := err.(*errors.StatusError)
-		require.Equal(t, metav1.StatusReasonNotFound, status.ErrStatus.Reason)
+		require.Equal(t, metav1.StatusReasonNotFound, status.Status().Reason)
 	}
 	assert.Nil(t, target)
 }

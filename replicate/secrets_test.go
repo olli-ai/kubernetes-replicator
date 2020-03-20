@@ -326,7 +326,7 @@ func TestSecrets_install_delete(t *testing.T) {
 	if assert.Error(t, err) {
 		require.IsType(t, &errors.StatusError{}, err)
 		status := err.(*errors.StatusError)
-		require.Equal(t, metav1.StatusReasonNotFound, status.ErrStatus.Reason)
+		require.Equal(t, metav1.StatusReasonNotFound, status.Status().Reason)
 	}
 	assert.Nil(t, target)
 }
@@ -472,7 +472,7 @@ func TestSecrets_from_to(t *testing.T) {
 
 	stop := repl.Start()
 	defer stop()
-	time.Sleep(time.Second) // takes much more time for some reason
+	time.Sleep(time.Second)
 
 	time.Sleep(SafeDuration)
 	target, err := client.CoreV1().Secrets("target-namespace").Get("target-name", metav1.GetOptions{})
@@ -558,7 +558,7 @@ func TestSecrets_from_to(t *testing.T) {
 	if assert.Error(t, err) {
 		require.IsType(t, &errors.StatusError{}, err)
 		status := err.(*errors.StatusError)
-		require.Equal(t, metav1.StatusReasonNotFound, status.ErrStatus.Reason)
+		require.Equal(t, metav1.StatusReasonNotFound, status.Status().Reason)
 	}
 	assert.Nil(t, target)
 }
