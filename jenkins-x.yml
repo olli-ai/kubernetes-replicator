@@ -81,6 +81,9 @@ pipelineConfig:
           agent:
             image: go
           steps:
+          - command: helm init --client-only
+            image: asia.gcr.io/olli-iviet/builder-go:helm-v2.17.0-x2
+            name: helm-init
           - command: make preview
             dir: /workspace/source/charts/preview
             name: make-preview
@@ -167,6 +170,9 @@ pipelineConfig:
           agent:
             image: go
           steps:
+          - command: helm init --client-only
+            image: asia.gcr.io/olli-iviet/builder-go:helm-v2.17.0-x2
+            name: helm-init
           - command: jx step changelog --batch-mode --version v${VERSION}
             dir: /workspace/source/charts/kubernetes-replicator
             name: changelog
