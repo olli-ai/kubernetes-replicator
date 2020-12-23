@@ -173,6 +173,6 @@ pipelineConfig:
           - command: jx step helm release
             dir: /workspace/source/charts/kubernetes-replicator
             name: helm-release
-          - command: jx promote -b --env dev --timeout 1h --version ${VERSION}
+          - command: jx promote -b --env staging --timeout 1h --version ${VERSION}
             dir: /workspace/source/charts/kubernetes-replicator
             name: jx-promote
