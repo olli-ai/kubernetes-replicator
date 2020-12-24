@@ -10,6 +10,7 @@ REPOSITORY = ${DOCKER_REPOSITORY}/${DOCKER_IMAGE}:${DOCKER_TAG}
 GOCMD = go
 GOFLAGS ?= $(GOFLAGS:)
 LDFLAGS =
+TESTS ?= .
 
 default: build
 
@@ -22,8 +23,8 @@ build:
 builder-image:
 	@docker build -t "${DOCKER_IMAGE}" .
 
-# test:
-# 	"$(GOCMD)" test -timeout 1800s -v ./...
+test:
+	"$(GOCMD)" test -v ./... -run ${TESTS}
 
 clean-images:
 	@docker rmi "${DOCKER_REPOSITORY}"

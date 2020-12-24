@@ -2,6 +2,7 @@ package replicate
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,6 +12,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
+
+// An invalid annotation name to be sure it will never be sent to kubernetes
+const CheckedAnnotation = "#checked#"
 
 // pattern of a valid kubernetes name
 var validName = regexp.MustCompile(`^[0-9a-z.-]+$`)
@@ -80,7 +84,7 @@ type replicatorProps struct {
 // Replicator describes the common interface that the secret and configmap
 // replicators should adhere to
 type Replicator interface {
-	Start()
+	Start() func()
 	Synced() bool
 }
 
@@ -88,21 +92,21 @@ type Replicator interface {
 // It means that replication-allowes and replications-allowed-namespaces are correct
 // Returns true if replication is allowed.
 // If replication is not allowed returns false with error message
-func (r *replicatorProps) isReplicationAllowed(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
-	annotationAllowed, ok := sourceObject.Annotations[ReplicationAllowed]
-	annotationAllowedNs, okNs := sourceObject.Annotations[ReplicationAllowedNamespaces]
+func (r *replicatorProps) isReplicationAllowedAnnotation(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, bool, error) {
+	annotationAllowed, ok := sourceObject.Annotations[ReplicationAllowedAnnotation]
+	annotationAllowedNs, okNs := sourceObject.Annotations[AllowedNamespacesAnnotation]
 	// unless allowAll, explicit permission is required
 	if !r.allowAll && !ok && !okNs {
-		return false, fmt.Errorf("source %s/%s does not explicitely allow replication",
+		return false, true, fmt.Errorf("source %s/%s does not explicitely allow replication",
 			sourceObject.Namespace, sourceObject.Name)
 	}
 	// check allow annotation
 	if ok {
 		if val, err := strconv.ParseBool(annotationAllowed); err != nil {
-			return false, fmt.Errorf("source %s/%s has illformed annotation %s (%s): %s",
-				sourceObject.Namespace, sourceObject.Name, ReplicationAllowed, annotationAllowed, err)
+			return false, false, fmt.Errorf("source %s/%s has illformed annotation %s (%s): %s",
+				sourceObject.Namespace, sourceObject.Name, ReplicationAllowedAnnotation, annotationAllowed, err)
 		} else if !val {
-			return false, fmt.Errorf("source %s/%s explicitely disallow replication",
+			return false, true, fmt.Errorf("source %s/%s explicitely disallow replication",
 				sourceObject.Namespace, sourceObject.Name)
 		}
 	}
@@ -118,30 +122,32 @@ func (r *replicatorProps) isReplicationAllowed(object *metav1.ObjectMeta, source
 			} else if ok, err := regexp.MatchString(`^(?:`+ns+`)$`, object.Namespace); ok {
 				allowed = true
 			} else if err != nil {
-				return false, fmt.Errorf("source %s/%s has compilation error on annotation %s (%s): %s",
-					sourceObject.Namespace, sourceObject.Name, ReplicationAllowedNamespaces, ns, err)
+				return false, false, fmt.Errorf("source %s/%s has compilation error on annotation %s (%s): %s",
+					sourceObject.Namespace, sourceObject.Name, AllowedNamespacesAnnotation, ns, err)
 			}
 		}
 		if !allowed {
-			return false, fmt.Errorf("source %s/%s does not allow replication to namespace %s",
+			return false, true, fmt.Errorf("source %s/%s does not allow replication to namespace %s",
 				sourceObject.Namespace, sourceObject.Name, object.Namespace)
 		}
 	}
 	// source cannot have "replicate-from" annotation
-	if val, ok := resolveAnnotation(sourceObject, ReplicateFromAnnotation); ok {
-		return false, fmt.Errorf("source %s/%s is already replicated from %s",
+	if val, ok := resolveAnnotation(sourceObject, ReplicationSourceAnnotation); ok {
+		return false, false, fmt.Errorf("source %s/%s is already replicated from %s",
 			sourceObject.Namespace, sourceObject.Name, val)
 	}
 
-	return true, nil
+	return true, false, nil
 }
 
 // Checks that data update is needed
-// Returns true if update is needed
-// If update is not needed returns false with error message
+// Returns:
+// - needed: true if an update is needed
+// - once: true if no update is needed because replicated once
+// - err: if not needed, an error message
 func (r *replicatorProps) needsDataUpdate(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, bool, error) {
 	// target was "replicated" from a delete source, or never replicated
-	if targetVersion, ok := object.Annotations[ReplicatedFromVersionAnnotation]; !ok {
+	if targetVersion, ok := object.Annotations[ReplicatedVersionAnnotation]; !ok {
 		return true, false, nil
 	// target and source share the same version
 	} else if ok && targetVersion == sourceObject.ResourceVersion {
@@ -186,7 +192,7 @@ func (r *replicatorProps) needsDataUpdate(object *metav1.ObjectMeta, sourceObjec
 	} else if targetVersion, err := semver.NewVersion(annotationVersion); err != nil {
 		return false, false, fmt.Errorf("target %s/%s has illformed annotation %s: %s",
 			object.Namespace, object.Name, ReplicateOnceVersionAnnotation, err)
-	// source version is greatwe than source version, should update
+	// source version is greater than source version, should update
 	} else if sourceVersion.GreaterThan(targetVersion) {
 		hasOnce = false
 	// source version is not greater than target version
@@ -203,23 +209,23 @@ func (r *replicatorProps) needsDataUpdate(object *metav1.ObjectMeta, sourceObjec
 	return true, false, nil
 }
 
-// Checks that data annotation is needed
+// Checks that "from" and "once" annotations update is needed
 // Returns true if update is needed
 // Return an error only if a source annotation is illformed
 func (r *replicatorProps) needsFromAnnotationsUpdate(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
-	update := false
+	update := r.needsCopyLabelsUpdate(object)
 	// check "from" annotation of the source
-	if source, sOk := resolveAnnotation(sourceObject, ReplicateFromAnnotation); !sOk {
+	if source, sOk := resolveAnnotation(sourceObject, ReplicationSourceAnnotation); !sOk {
 		return false, fmt.Errorf("source %s/%s misses annotation %s",
-			sourceObject.Namespace, sourceObject.Name, ReplicateFromAnnotation)
+			sourceObject.Namespace, sourceObject.Name, ReplicationSourceAnnotation)
 
 	} else if !validPath.MatchString(source) ||
 			source == fmt.Sprintf("%s/%s", sourceObject.Namespace, sourceObject.Name) {
 		return false, fmt.Errorf("source %s/%s has invalid annotation %s (%s)",
-			sourceObject.Namespace, sourceObject.Name, ReplicateFromAnnotation, source)
+			sourceObject.Namespace, sourceObject.Name, ReplicationSourceAnnotation, source)
 
 	// check that target has the same annotation
-	} else if val, ok := object.Annotations[ReplicateFromAnnotation]; !ok || val != source {
+	} else if val, ok := object.Annotations[ReplicationSourceAnnotation]; !ok || val != source {
 		update = true
 	}
 
@@ -239,16 +245,19 @@ func (r *replicatorProps) needsFromAnnotationsUpdate(object *metav1.ObjectMeta, 
 	return update, nil
 }
 
+// Checks that "allowed" annotations update is needed
+// Returns true if update is needed
+// Return an error only if a source annotation is illformed
 func (r *replicatorProps) needsAllowedAnnotationsUpdate(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
-	update := false
+	update := r.needsCopyLabelsUpdate(object)
 
-	allowed, okA := sourceObject.Annotations[ReplicationAllowed]
-	if val, ok := object.Annotations[ReplicationAllowed]; ok != okA || ok && val != allowed {
+	allowed, okA := sourceObject.Annotations[ReplicationAllowedAnnotation]
+	if val, ok := object.Annotations[ReplicationAllowedAnnotation]; ok != okA || ok && val != allowed {
 		update = true
 	}
 
-	allowedNs, okNs := sourceObject.Annotations[ReplicationAllowedNamespaces]
-	if val, ok := object.Annotations[ReplicationAllowedNamespaces]; ok != okNs || ok && val != allowedNs {
+	allowedNs, okNs := sourceObject.Annotations[AllowedNamespacesAnnotation]
+	if val, ok := object.Annotations[AllowedNamespacesAnnotation]; ok != okNs || ok && val != allowedNs {
 		update = true
 	}
 
@@ -260,7 +269,7 @@ func (r *replicatorProps) needsAllowedAnnotationsUpdate(object *metav1.ObjectMet
 	if okA {
 		if _, err := strconv.ParseBool(allowed); err != nil {
 			return false, fmt.Errorf("source %s/%s has illformed annotation %s (%s): %s",
-				sourceObject.Namespace, sourceObject.Name, ReplicationAllowed, allowed, err)
+				sourceObject.Namespace, sourceObject.Name, ReplicationAllowedAnnotation, allowed, err)
 		}
 	}
 	// check allow-namespaces annotation
@@ -269,12 +278,35 @@ func (r *replicatorProps) needsAllowedAnnotationsUpdate(object *metav1.ObjectMet
 			if ns == "" || validName.MatchString(ns) {
 			} else if _, err := regexp.Compile(`^(?:`+ns+`)$`); err != nil {
 				return false, fmt.Errorf("source %s/%s has compilation error on annotation %s (%s): %s",
-					sourceObject.Namespace, sourceObject.Name, ReplicationAllowedNamespaces, ns, err)
+					sourceObject.Namespace, sourceObject.Name, AllowedNamespacesAnnotation, ns, err)
 			}
 		}
 	}
 
 	return true, nil
+}
+
+// Checks that copy labels are up to date
+// Returns true if update is needed
+func (r *replicatorProps) needsCopyLabelsUpdate(object *metav1.ObjectMeta) bool {
+	if len(object.Labels) != len(CopyLabels) {
+		return true
+	}
+	for k, v := range CopyLabels {
+		if object.Labels[k] != v {
+			return true
+		}
+	}
+	return false
+}
+
+// Returns a copy of the copy labels
+func getCopyLabels() map[string]string {
+	labels := map[string]string{}
+	for k, v := range CopyLabels {
+		labels[k] = v
+	}
+	return labels
 }
 
 // Checks that replication from the source object to the target objects is allowed
@@ -283,7 +315,7 @@ func (r *replicatorProps) needsAllowedAnnotationsUpdate(object *metav1.ObjectMet
 // If replication is not allowed returns false with error message
 func (r *replicatorProps) isReplicatedBy(object *metav1.ObjectMeta, sourceObject *metav1.ObjectMeta) (bool, error) {
 	// make sure that the target object was created from the source
-	if annotationFrom, ok := object.Annotations[ReplicatedByAnnotation]; !ok {
+	if annotationFrom, ok := object.Annotations[CreatedByAnnotation]; !ok {
 		return false, fmt.Errorf("target %s/%s was not replicated",
 			object.Namespace, object.Name)
 
@@ -318,9 +350,6 @@ func (r *replicatorProps) isReplicatedTo(object *metav1.ObjectMeta, targetObject
 	}
 
 	return false, nil
-
-	// return false, fmt.Error("source %s/%s is not replated to %s",
-	// 	object.Namespace, object.Name, key)
 }
 
 // Returns everything needed to compute the desired targets
@@ -328,13 +357,13 @@ func (r *replicatorProps) isReplicatedTo(object *metav1.ObjectMeta, targetObject
 // - targetPatterns: a slice of targetPattern, using regex to identify if a namespace is matched
 //                   two patterns can generate the same target, and even the object itself
 func (r *replicatorProps) getReplicationTargets(object *metav1.ObjectMeta) ([]string, []targetPattern, error) {
-	annotationTo, okTo := object.Annotations[ReplicateToAnnotation]
-	annotationToNs, okToNs := object.Annotations[ReplicateToNamespacesAnnotation]
+	annotationTo, okTo := object.Annotations[ReplicationTargetsAnnotation]
+	annotationToNs, okToNs := object.Annotations[TargetNamespacesAnnotation]
 	if !okTo && !okToNs {
 		return nil, nil, nil
 	}
 
-	key := fmt.Sprintf("%s/%s", object.Name, object.Namespace)
+	key := fmt.Sprintf("%s/%s", object.Namespace, object.Name)
 	targets := []string{}
 	targetPatterns := []targetPattern{}
 	// cache of patterns, to reuse them as much as possible
@@ -363,7 +392,7 @@ func (r *replicatorProps) getReplicationTargets(object *metav1.ObjectMeta) ([]st
 			// raise error
 			} else {
 				return nil, nil, fmt.Errorf("source %s has invalid name on annotation %s (%s)",
-					key, ReplicateToAnnotation, n)
+					key, ReplicationTargetsAnnotation, n)
 			}
 		}
 	}
@@ -376,7 +405,7 @@ func (r *replicatorProps) getReplicationTargets(object *metav1.ObjectMeta) ([]st
 		for _, ns := range strings.Split(annotationToNs, ",") {
 			if strings.ContainsAny(ns, "/") {
 				return nil, nil, fmt.Errorf("source %s has invalid namespace pattern on annotation %s (%s)",
-					key, ReplicateToNamespacesAnnotation, ns)
+					key, TargetNamespacesAnnotation, ns)
 			} else if ns != "" {
 				namespaces[ns] = true
 			}
@@ -408,7 +437,7 @@ func (r *replicatorProps) getReplicationTargets(object *metav1.ObjectMeta) ([]st
 		// raise compilation error
 		} else {
 			return nil, nil, fmt.Errorf("source %s has compilation error on annotation %s (%s): %s",
-				key, ReplicateToNamespacesAnnotation, ns, err)
+				key, TargetNamespacesAnnotation, ns, err)
 		}
 	}
 	// for all the qualified names, check if the namespace part is a pattern
@@ -417,11 +446,11 @@ func (r *replicatorProps) getReplicationTargets(object *metav1.ObjectMeta) ([]st
 		// check that there is exactly one "/"
 		} else if qs := strings.SplitN(q, "/", 3); len(qs) != 2 {
 			return nil, nil, fmt.Errorf("source %s has invalid path on annotation %s (%s)",
-				key, ReplicateToAnnotation, q)
+				key, ReplicationTargetsAnnotation, q)
 		// check that the name part is valid
 		} else if n := qs[1]; !validName.MatchString(n) {
 			return nil, nil, fmt.Errorf("source %s has invalid name on annotation %s (%s)",
-				key, ReplicateToAnnotation, n)
+				key, ReplicationTargetsAnnotation, n)
 		// check if the namespace is a pattern
 		} else if ns := qs[0]; validName.MatchString(ns) {
 			targets = append(targets, q)
@@ -435,7 +464,7 @@ func (r *replicatorProps) getReplicationTargets(object *metav1.ObjectMeta) ([]st
 		// raise compilation error
 		} else {
 			return nil, nil, fmt.Errorf("source %s has compilation error on annotation %s (%s): %s",
-				key, ReplicateToAnnotation, ns, err)
+				key, ReplicationTargetsAnnotation, ns, err)
 		}
 	}
 
@@ -462,4 +491,63 @@ func annotationRefersTo(object *metav1.ObjectMeta, annotation string, reference 
 	} else {
 		return object.Namespace == reference.Namespace && val == reference.Name
 	}
+}
+
+// Corrects the annotations of the object
+// Returns an error if the annotations cannot be fixed
+// Returns true if annotations were changed and should be updated in kubernetes
+// Returns false if the annotations are ok
+// Uses the speciall annotation CheckedAnnotation to cache the status
+func updateDeprecatedAnnotations(object *metav1.ObjectMeta) (bool, error) {
+	// nil annotations are always valid
+	if object.Annotations == nil {
+		return false, nil
+	}
+	// look for CheckedAnnotation (cached status)
+	if value, ok := object.Annotations[CheckedAnnotation]; ok {
+		if value == "valid" {
+			return false, nil
+		} else if value == "update" {
+			return true, nil
+		} else {
+			return false, fmt.Errorf("unknown annotations")
+		}
+	}
+	// check all annotations
+	valid := true
+	update := []string{} // the deprecated fields to update
+	prefix := strings.ContainsAny(AnnotationsPrefix, "/")
+	for annotation, _ := range object.Annotations {
+		// a deprectaed annotation
+		if new, ok := DeprecatedAnnotations[annotation]; ok {
+			log.Printf("object %s/%s has deprecated annotation %s, use %s",
+				object.Namespace, object.Name, annotation, new)
+			update = append(update, annotation)
+		} else if !prefix || AllAnnotations[annotation] {
+		// an unknown field with the right prefix
+		} else if strings.HasPrefix(annotation, AnnotationsPrefix) {
+			log.Printf("object %s/%s has unknown annotation %s",
+				object.Namespace, object.Name, annotation)
+			valid = false
+		}
+	}
+	// invalid, return an error
+	if !valid {
+		object.Annotations[CheckedAnnotation] = "error"
+		return false, fmt.Errorf("unknown annotations")
+	// nothing to do, return false
+	} else if len(update) == 0 {
+		object.Annotations[CheckedAnnotation] = "valid"
+		return false, nil
+	}
+	// update all the deprecated annotations
+	object.Annotations[CheckedAnnotation] = "update"
+	for _, old := range update {
+		new := DeprecatedAnnotations[old]
+		if _, ok := object.Annotations[new]; !ok {
+			object.Annotations[new] = object.Annotations[old]
+		}
+		delete(object.Annotations, old)
+	}
+	return true, nil
 }

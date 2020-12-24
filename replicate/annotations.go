@@ -1,28 +1,61 @@
 package replicate
-
 // Annotations that are used to control this controller's behaviour
 var (
-	ReplicateFromAnnotation         = "replicate-from"
-	ReplicateToAnnotation           = "replicate-to"
-	ReplicateToNamespacesAnnotation = "replicate-to-namespaces"
-	ReplicateOnceAnnotation         = "replicate-once"
-	ReplicateOnceVersionAnnotation  = "replicate-once-version"
-	ReplicatedAtAnnotation          = "replicated-at"
-	ReplicatedByAnnotation          = "replicated-by"
-	ReplicatedFromVersionAnnotation = "replicated-from-version"
-	ReplicationAllowed              = "replication-allowed"
-	ReplicationAllowedNamespaces    = "replication-allowed-namespaces"
+	ReplicationSourceAnnotation    = "replicate-from"
+	ReplicationTargetsAnnotation   = "replicate-to"
+	TargetNamespacesAnnotation     = "replicate-to-namespaces"
+	ReplicateOnceAnnotation        = "replicate-once"
+	ReplicateOnceVersionAnnotation = "replicate-once-version"
+	ReplicationTimeAnnotation      = "replicated-at"
+	CreatedByAnnotation            = "replicated-by"
+	ReplicatedVersionAnnotation    = "replicated-version"
+	ReplicationAllowedAnnotation   = "replication-allowed"
+	AllowedNamespacesAnnotation    = "replication-allowed-namespaces"
 )
 
+var annotationPointers = map[string]*string {
+	"replicate-from":                 &ReplicationSourceAnnotation,
+	"replicate-to":                   &ReplicationTargetsAnnotation,
+	"replicate-to-namespaces":        &TargetNamespacesAnnotation,
+	"replicate-once":                 &ReplicateOnceAnnotation,
+	"replicate-once-version":         &ReplicateOnceVersionAnnotation,
+	"replicated-at":                  &ReplicationTimeAnnotation,
+	"replicated-by":                  &CreatedByAnnotation,
+	"replicated-version":             &ReplicatedVersionAnnotation,
+	"replication-allowed":            &ReplicationAllowedAnnotation,
+	"replication-allowed-namespaces": &AllowedNamespacesAnnotation,
+}
+
+var AllAnnotations map[string]bool
+
+var CopyLabels = map[string]string {
+	"managed-by": "kubernetes-replicator",
+}
+
+var deprecated map[string]string = map[string]string {
+	"replicated-from-version": "replicated-version",
+}
+
+var DeprecatedAnnotations map[string]string
+
+var AnnotationsPrefix = ""
+
+func init() {
+	PrefixAnnotations("kubernetes-replicator/")
+}
+
 func PrefixAnnotations(prefix string){
-	ReplicateFromAnnotation         = prefix + ReplicateFromAnnotation
-	ReplicateToAnnotation           = prefix + ReplicateToAnnotation
-	ReplicateToNamespacesAnnotation = prefix + ReplicateToNamespacesAnnotation
-	ReplicateOnceAnnotation         = prefix + ReplicateOnceAnnotation
-	ReplicateOnceVersionAnnotation  = prefix + ReplicateOnceVersionAnnotation
-	ReplicatedAtAnnotation          = prefix + ReplicatedAtAnnotation
-	ReplicatedByAnnotation          = prefix + ReplicatedByAnnotation
-	ReplicatedFromVersionAnnotation = prefix + ReplicatedFromVersionAnnotation
-	ReplicationAllowed              = prefix + ReplicationAllowed
-	ReplicationAllowedNamespaces    = prefix + ReplicationAllowedNamespaces
+	AnnotationsPrefix = prefix
+	a := map[string]bool {}
+	for name, ptr := range annotationPointers {
+		name = prefix + name
+		*ptr = name
+		a[name] = true
+	}
+	AllAnnotations = a
+	d := map[string]string {}
+	for old, new := range deprecated {
+		d[prefix + old] = prefix + new
+	}
+	DeprecatedAnnotations = d
 }
